@@ -1,0 +1,336 @@
+// import { useAuth } from "@/context/useAuth";
+// import useMeta from "@/hook/useMeta";
+// import { uxionToXion } from "@/helper/convert";
+// import { MsgSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
+// import { DeliverTxResponse } from "@cosmjs/cosmwasm-stargate";
+// import { MsgGrant } from "cosmjs-types/cosmos/authz/v1beta1/tx";
+// import { GenericAuthorization } from "cosmjs-types/cosmos/authz/v1beta1/authz";
+// import { useEffect } from "react";
+
+// const contractAddress =
+//   "xion1t6pp2v9fz5lsdl5ru9ynwcs322qrqe7hjpj66cqsmfjwfkukel8sesxm8y";
+
+// export default function useXion() {
+//   const { bech32Address, isConnected, queryClient, signingClient, signArb } = useMeta();
+//   const { user } = useAuth();
+//   console.log(user);
+
+//   // Automatically set up authz grant when wallet is connected
+//   useEffect(() => {
+//     const setupAuthz = async () => {
+//       if (!user?.walletAddress || !signingClient?.granteeAddress || !isConnected) {
+//         console.log("Skipping authz setup: missing wallet or grantee address");
+//         return;
+//       }
+//       try {
+//         await grantAuthz(user.walletAddress, signingClient.granteeAddress);
+//       } catch (error) {
+//         console.error("Failed to set up authz grant:", error);
+//       }
+//     };
+//     setupAuthz();
+//   }, [user?.walletAddress, signingClient, isConnected]);
+
+//   const grantAuthz = async (granterAddress: string, granteeAddress: string) => {
+//     try {
+//       if (!signingClient) {
+//         throw new Error("Signing client is not initialized.");
+//       }
+
+//       const msgGrant = {
+//         typeUrl: "/cosmos.authz.v1beta1.MsgGrant",
+//         value: MsgGrant.fromPartial({
+//           granter: granterAddress,
+//           grantee: granteeAddress,
+//           grant: {
+//             authorization: {
+//               typeUrl: "/cosmos.authz.v1beta1.GenericAuthorization",
+//               value: GenericAuthorization.encode({
+//                 msg: "/cosmos.bank.v1beta1.MsgSend",
+//               }).finish(),
+//             },
+//           },
+//         }),
+//       };
+
+//       const response = await signingClient.signAndBroadcast(
+//         granterAddress,
+//         [msgGrant],
+//         "auto",
+//         "Grant authz for MsgSend"
+//       );
+
+//       console.log("Authz grant created:", response);
+//       return response;
+//     } catch (error) {
+//       console.error("Error creating authz grant:", error);
+//       throw error;
+//     }
+//   };
+
+//   const verifyAuthz = async (granter: string, grantee: string) => {
+//     try {
+//       if (!queryClient) {
+//         throw new Error("Query client is not initialized.");
+//       }
+
+//       // Access the authz query client (adjust based on your cosmjs version)
+//       const authzClient = queryClient.authz || queryClient; // Fallback if authz is not directly available
+//       const response = await authzClient.grants(
+//         granter,
+//         grantee,
+//         "/cosmos.bank.v1beta1.MsgSend"
+//       );
+//       console.log("Authz grants:", response);
+//       return response;
+//     } catch (error) {
+//       console.error("Error verifying authz grant:", error);
+//       return { grants: [] }; // Return empty grants on error to avoid blocking
+//     }
+//   };
+
+//   const transferToken = async (
+//     senderAddress: string,
+//     recipientAddress: string,
+//     amount: string,
+//     denom: string = "uxion"
+//   ) => {
+//     console.log({ senderAddress, recipientAddress, amount, denom, bech32Address });
+
+//     try {
+//       if (!isConnected) {
+//         throw new Error("Please connect your wallet.");
+//       }
+
+//       if (!signingClient) {
+//         throw new Error("Signing client is not initialized.");
+//       }
+
+//       if (!signingClient.granteeAddress) {
+//         throw new Error("Grantee address is not set.");
+//       }
+
+//       // Verify authz grant
+//       const grants = await verifyAuthz(senderAddress, signingClient.granteeAddress);
+//       if (!grants.grants.length) {
+//         console.warn("No authz grant found for MsgSend. Attempting to create one...");
+//         await grantAuthz(senderAddress, signingClient.granteeAddress);
+//       }
+
+//       if (!amount || Number(amount) <= 0) {
+//         throw new Error("Invalid amount: must be greater than zero.");
+//       }
+
+//       // Check balance
+//       const balance = await queryClient?.getBalance(senderAddress, denom);
+//       const formattedAmount = Math.floor(Number(amount) * 1e6).toString();
+//       const totalNeeded = Number(formattedAmount) + 1000; // Amount + approximate fee
+//       if(balance){
+//         if (Number(balance.amount) < totalNeeded) {
+//           throw new Error(`Insufficient balance: ${uxionToXion(balance.amount)} ${denom} available`);
+//         }
+//       }
+
+//       const funds = [{ denom, amount: formattedAmount }];
+//       console.log({ funds });
+
+//       const response: DeliverTxResponse = await signingClient.sendTokens(
+//         senderAddress,
+//         recipientAddress,
+//         funds,
+//         "auto",
+//         undefined
+//       );
+
+//       console.log("Tokens transferred successfully!");
+//       console.log({ txHash: response.transactionHash });
+//       return response;
+//     } catch (error: any) {
+//       console.error("Error transferring tokens:", {
+//         message: error.message,
+//         stack: error.stack,
+//         details: error,
+//       });
+//       throw error;
+//     }
+//   };
+
+//   const getMetaBalance = async (
+//     address: string,
+//     denom: string = "uxion"
+//   ): Promise<string | undefined> => {
+//     try {
+//       if (!queryClient) {
+//         throw new Error("Query client is not initialized.");
+//       }
+
+//       const bal = await queryClient.getBalance(address, denom);
+//       console.log({ bal });
+//       if (bal?.amount) {
+//         return uxionToXion(bal.amount);
+//       } else {
+//         throw new Error("Balance not found or invalid balance structure.");
+//       }
+//     } catch (error) {
+//       console.error("Error getting balance:", error);
+//     }
+//   };
+
+//   const getWalletQuery = async () => {
+//     try {
+//       if (!isConnected) {
+//         throw new Error("Please connect your wallet.");
+//       }
+
+//       if (!queryClient) {
+//         throw new Error("Query client is not initialized.");
+//       }
+
+//       const response = await queryClient.queryContractSmart("", {
+//         get_count: {},
+//       });
+//       console.log(response);
+//     } catch (error) {
+//       console.error("Error querying wallet:", error);
+//     }
+//   };
+
+//   const transferTokenWithApproval = async (
+//     senderAddress: string,
+//     recipientAddress: string,
+//     amount: string
+//   ) => {
+//     try {
+//       if (!isConnected) {
+//         throw new Error("Please connect your wallet.");
+//       }
+
+//       if (!signingClient || !signArb) {
+//         throw new Error("Signing client or signArb is not initialized.");
+//       }
+
+//       const formattedAmount = Math.floor(Number(amount) * 1e6).toString();
+//       const funds = [{ denom: "uxion", amount: formattedAmount }];
+
+//       const msgSend: MsgSend = {
+//         fromAddress: senderAddress,
+//         toAddress: recipientAddress,
+//         amount: funds,
+//       };
+
+//       console.log("Signing MsgSend:", msgSend);
+
+//       await signArb(senderAddress, "you are send");
+
+//       console.log("Tokens transferred successfully!");
+//     } catch (error) {
+//       console.error("Error transferring tokens:", error);
+//     }
+//   };
+
+//   async function transferTokenWithConfirmation(
+//     senderAddress: string,
+//     recipientAddress: string,
+//     amount: string,
+//     denom: string = "untrn"
+//   ) {
+//     try {
+//       if (!signingClient || !signArb) {
+//         console.log("Signing client or signArb is not ready.");
+//         return;
+//       }
+
+//       const confirmationMessage = `I confirm to send ${amount} ${denom} tokens to ${recipientAddress}`;
+//       const signedMessage = await signArb(senderAddress, confirmationMessage);
+
+//       if (!signedMessage) {
+//         console.log("User did not sign the confirmation.");
+//         return;
+//       }
+
+//       console.log("User signed confirmation:", signedMessage);
+//       const formattedAmount = Math.floor(Number(amount) * 1e6).toString();
+
+//       const funds = [
+//         {
+//           denom: denom,
+//           amount: formattedAmount,
+//         },
+//       ];
+
+//       const sendTokensResult = await signingClient.sendTokens(
+//         senderAddress,
+//         recipientAddress,
+//         funds,
+//         "auto",
+//         "Sending tokens after user confirmation"
+//       );
+
+//       console.log("Transaction sent! TxHash:", sendTokensResult.transactionHash);
+//     } catch (error) {
+//       console.error("Error during token transfer:", error);
+//     }
+//   }
+
+//   async function handleSign(): Promise<void> {
+//     if (signingClient?.granteeAddress) {
+//       const response = await signArb?.(
+//         signingClient.granteeAddress,
+//         "abstraxion challenge"
+//       );
+//       console.log(response);
+//     }
+//   }
+
+//   const initEscrow = async (userWalletAddress: string, amount: string, sellerAddress: string) => {
+//     console.log({ userWalletAddress });
+//     try {
+//       const formattedAmount = Math.floor(Number(amount) * 1e6).toString();
+
+//       const msg = {
+//         initiate_escrow: {
+//           seller: sellerAddress,
+//           amount: formattedAmount,
+//         },
+//       };
+//       const funds = [{ denom: "uxion", amount: formattedAmount }];
+//       const fee = {
+//         amount: [{ denom: "uxion", amount: "1000" }],
+//       };
+
+//       console.log({ fee });
+
+//       const result = await signingClient?.execute(
+//         bech32Address,
+//         contractAddress,
+//         msg,
+//         "auto",
+//         undefined,
+//         funds
+//       );
+
+//       console.log("Escrow initiated:", result);
+//       return {
+//         transactionHash: result?.transactionHash,
+//         gasUsed: result?.gasUsed,
+//         height: result?.height,
+//         events: result?.events,
+//       };
+//     } catch (error) {
+//       console.error("Error initiating escrow:", error);
+//       return null;
+//     }
+//   };
+
+//   return {
+//     getWalletQuery,
+//     getMetaBalance,
+//     transferToken,
+//     transferTokenWithApproval,
+//     transferTokenWithConfirmation,
+//     handleSign,
+//     initEscrow,
+//   };
+// }
+
+

@@ -1,0 +1,144 @@
+import { useAuth } from "@/context/useAuth";
+import useMeta from "@/hook/useMeta";
+import { uxionToXion } from "@/helper/convert";
+import { MsgSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
+import { DeliverTxResponse } from "@cosmjs/cosmwasm-stargate";
+import { MsgGrant } from "cosmjs-types/cosmos/authz/v1beta1/tx";
+import { GenericAuthorization } from "cosmjs-types/cosmos/authz/v1beta1/authz";
+import { useEffect } from "react";
+
+export default function useXion() {
+  const { bech32Address, isConnected, isConnecting, queryClient, signingClient, signArb } = useMeta();
+  const { user } = useAuth();
+
+  useEffect(() => {
+    const setupAuthz = async () => {
+      if (!user?.walletAddress || !bech32Address || !signingClient?.granteeAddress || !isConnected || isConnecting) {
+        console.log("Skipping authz setup: incomplete wallet connection");
+        return;
+      }
+
+      if (user.walletAddress !== bech32Address) {
+        console.warn("Wallet address mismatch");
+        return;
+      }
+
+      try {
+        await grantAuthz(user.walletAddress, signingClient.granteeAddress, "/cosmos.authz.v1beta1.MsgGrant");
+        await grantAuthz(user.walletAddress, signingClient.granteeAddress, "/cosmos.bank.v1beta1.MsgSend");
+      } catch (error) {
+        console.error("Failed to set up authz grant:", error);
+      }
+    };
+    setupAuthz();
+  }, [user?.walletAddress, bech32Address, signingClient, isConnected, isConnecting]);
+
+  const grantAuthz = async (granterAddress: string, granteeAddress: string, msgType: string) => {
+    if (!signingClient || !signArb) {
+      throw new Error("Signing client or signArb is not ready.");
+    }
+
+    const msgGrant = {
+      typeUrl: "/cosmos.authz.v1beta1.MsgGrant",
+      value: MsgGrant.fromPartial({
+        granter: granterAddress,
+        grantee: granteeAddress,
+        grant: {
+          authorization: {
+            typeUrl: "/cosmos.authz.v1beta1.GenericAuthorization",
+            value: GenericAuthorization.encode({ msg: msgType }).finish(),
+          },
+        },
+      }),
+    };
+
+    const response = await signingClient.signAndBroadcast(
+      granterAddress,
+      [msgGrant],
+      "auto",
+      `Grant authz for ${msgType}`
+    );
+    console.log(`Granted authz for ${msgType}:`, response);
+    return response;
+  };
+
+  const verifyAuthz = async (granter: string, grantee: string, msgType: string) => {
+    if (!queryClient) {
+      throw new Error("Query client is not initialized.");
+    }
+    try {
+      const grants = await (queryClient as any).authz.grants(granter, grantee, msgType);
+      return { grants: grants?.grants ?? [] };
+    } catch (error) {
+      console.error("Error verifying authz grant:", error);
+      return { grants: [] };
+    }
+  };
+
+  const transferToken = async (
+    senderAddress: string,
+    recipientAddress: string,
+    amount: string,
+    denom = "uxion"
+  ) => {
+    if (!isConnected || !signingClient || !signArb) {
+      throw new Error("Wallet not connected properly.");
+    }
+
+    if (senderAddress !== bech32Address) {
+      throw new Error("Sender address doesn't match connected wallet");
+    }
+
+    const grants = await verifyAuthz(senderAddress, signingClient.granteeAddress, "/cosmos.bank.v1beta1.MsgSend");
+    if (!grants.grants.length) {
+      await grantAuthz(senderAddress, signingClient.granteeAddress, "/cosmos.bank.v1beta1.MsgSend");
+    }
+
+    const balance = await queryClient?.getBalance(senderAddress, denom);
+    const formattedAmount = Math.floor(Number(amount) * 1e6).toString();
+    const totalNeeded = Number(formattedAmount) + 1000;
+
+    if (!balance || Number(balance.amount) < totalNeeded) {
+      throw new Error(`Insufficient balance. Available: ${uxionToXion(balance?.amount || "0")} ${denom}`);
+    }
+
+    const funds = [{ denom, amount: formattedAmount }];
+    const response: DeliverTxResponse = await signingClient.sendTokens(
+      senderAddress,
+      recipientAddress,
+      funds,
+      "auto"
+    );
+
+    console.log("Tokens transferred successfully:", response.transactionHash);
+    return response;
+  };
+
+  const getMetaBalance = async (address: string, denom = "uxion") => {
+    if (!queryClient) {
+      throw new Error("Query client is not initialized.");
+    }
+    try {
+      const bal = await queryClient.getBalance(address, denom);
+      return bal?.amount ? uxionToXion(bal.amount) : undefined;
+    } catch (error) {
+      console.error("Error fetching balance:", error);
+    }
+  };
+
+  const getWalletQuery = async () => {
+    if (!queryClient) throw new Error("Query client not initialized.");
+    try {
+      const response = await queryClient.queryContractSmart("", { get_count: {} });
+      console.log(response);
+    } catch (error) {
+      console.error("Error querying wallet:", error);
+    }
+  };
+
+  return {
+    transferToken,
+    getMetaBalance,
+    getWalletQuery,
+  };
+}

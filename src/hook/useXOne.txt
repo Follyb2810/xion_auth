@@ -1,0 +1,2002 @@
+import { useAuth } from "@/context/useAuth";
+import useMeta from "@/hook/useMeta";
+import { uxionToXion } from "@/helper/convert";
+import { Coin } from "@cosmjs/stargate";
+import { useEffect, useState } from "react";
+import { Timestamp } from "cosmjs-types/google/protobuf/timestamp";
+import { GenericAuthorization } from "cosmjs-types/cosmos/authz/v1beta1/authz";
+import { MsgGrant } from "cosmjs-types/cosmos/authz/v1beta1/tx";
+import { XionTransaction } from "@/helper/Xion";
+import { MsgSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
+
+export default function useXion() {
+  const {
+    bech32Address,
+    isConnected,
+    isConnecting,
+    queryClient,
+    signingClient,
+    signArb,
+  } = useMeta();
+  const { user } = useAuth();
+  const [signArbResponse, setSignArbResponse] = useState<string>("");
+  
+  useEffect(() => {
+    if (isConnected && signingClient) {
+      async function callPermission() {
+        try {
+          const txHash = await grantPermission();
+          console.log("Grant Tx Hash:", txHash);
+        } catch (error) {
+          console.error("Grant permission error:", error);
+        }
+      }
+      callPermission();
+    }
+  }, [isConnected, signingClient]);
+  
+
+  const handleSign = async (): Promise<void> => {
+    if (!signingClient?.granteeAddress) {
+      console.error("No grantee address to sign with.");
+      return;
+    }
+
+    try {
+      const response = await signArb?.(
+        signingClient.granteeAddress,
+        "abstraxion challenge"
+      );
+      if (response) setSignArbResponse(response);
+      console.log("Signature response:", response);
+    } catch (error) {
+      console.error("Error in handleSign:", error);
+    }
+  };
+  const grantPermission = async () => {
+    if (!signingClient || !bech32Address) throw new Error("Wallet not connected");
+  
+    const grantee = "some-grantee-address"; // Who will execute on your behalf
+    const granter = bech32Address;
+    
+    const expirationDate = new Date(Date.now() + 86400 * 1000); 
+    const expiration = {
+      // seconds: Math.floor(Date.now() / 1000 + 3600), // 1 hour from now
+      seconds: BigInt(Math.floor(expirationDate.getTime() / 1000)),
+      nanos: 0,
+    };
+  
+    const msgSendAuthorization = {
+      typeUrl: "/cosmos.authz.v1beta1.MsgGrant",
+      value: MsgGrant.encode({
+        granter,
+        grantee,
+        grant: {
+          authorization: {
+            typeUrl: "/cosmos.bank.v1beta1.SendAuthorization",
+            value: MsgSend.encode({
+              amount:[{
+                  denom: "uxion",
+                  amount: "1000000" // Adjust as needed
+                }],
+              fromAddress:'',
+              toAddress:''
+              
+              // spendLimit: [{
+              //   denom: "uxion",
+              //   amount: "1000000" // Adjust as needed
+              // }]
+            }).finish(),
+          },
+          expiration,
+        }
+      }).finish()
+    };
+  
+    const fee = {
+      amount: [{ denom: "uxion", amount: "5000" }],
+      gas: "200000",
+    };
+  
+    const result = await signingClient.signAndBroadcast(granter, [msgSendAuthorization], fee);
+    return result.transactionHash;
+  };
+
+  // const grantPermission = async (): Promise<string> => {
+  //   if (!signingClient || !bech32Address || !queryClient) {
+  //     throw new Error("Signing client or bech32 address not initialized.");
+  //   }
+
+  //   const grantee = signingClient.granteeAddress;
+  //   if (!grantee) throw new Error("Grantee address missing.");
+
+  //   try {
+  //     // const authzQueryClient = new XionTransaction()
+  //     // const existingGrant = await authzQueryClient.grants(
+  //     //   bech32Address,
+  //     //   grantee,
+  //     //   "/cosmos.bank.v1beta1.MsgSend"
+  //     // );
+  //     const txHelper = new XionTransaction();
+  //     const authzClient = await txHelper.getAuthzQueryClient();
+  //     const { grants } = await authzClient.authz.grants(
+  //       bech32Address,
+  //       grantee,
+  //       "/cosmos.bank.v1beta1.MsgSend"
+  //     );
+
+  //     if (grants.length > 0) {
+  //       console.log("Grant already exists:", grants);
+  //       return "Grant already exists";
+  //     }
+
+  //     const expirationDate = new Date(Date.now() + 86400 * 1000); // 1 day from now
+  //     const timestamp = Timestamp.fromPartial({
+  //       seconds: BigInt(Math.floor(expirationDate.getTime() / 1000)),
+  //       nanos: 0,
+  //     });
+
+  //     const msgGrant: MsgGrant = MsgGrant.fromPartial({
+  //       granter: bech32Address,
+  //       grantee: grantee,
+  //       grant: {
+  //         authorization: {
+  //           typeUrl: "/cosmos.authz.v1beta1.GenericAuthorization",
+  //           value: GenericAuthorization.encode({
+  //             msg: "/cosmos.bank.v1beta1.MsgSend",
+  //           }).finish(),
+  //         },
+  //         expiration: timestamp,
+  //       },
+  //     });
+  //     // const msgSendAuthorization = {
+  //     //   typeUrl: "/cosmos.authz.v1beta1.MsgGrant",
+  //     //   value: MsgGrant.encode({
+  //     //     granter,
+  //     //     grantee,
+  //     //     grant: {
+  //     //       authorization: {
+  //     //         typeUrl: "/cosmos.bank.v1beta1.SendAuthorization",
+  //     //         value: MsgSend.encode({
+  //     //           spendLimit: [{
+  //     //             denom: "uxion",
+  //     //             amount: "1000000" // Adjust as needed
+  //     //           }]
+  //     //         }).finish(),
+  //     //       },
+  //     //       expiration,
+  //     //     }
+  //     //   }).finish()
+  //     // };
+
+  //     const tx = await signingClient.signAndBroadcast(
+  //       bech32Address,
+  //       [
+  //         {
+  //           typeUrl: "/cosmos.authz.v1beta1.MsgGrant",
+  //           value: msgGrant,
+  //         },
+  //       ],
+  //       "auto"
+  //     );
+
+  //     if (tx.code !== 0) {
+  //       throw new Error(`Grant failed with code ${tx.code}: ${tx.rawLog}`);
+  //     }
+
+  //     console.log("Grant successful, tx hash:", tx.transactionHash);
+  //     return tx.transactionHash;
+  //   } catch (err) {
+  //     console.error("grantPermission error:", err);
+  //     throw err;
+  //   }
+  // };
+
+  const transferTokens = async (
+    recipientAddress: string,
+    amount: Coin[],
+    memo = ""
+  ): Promise<string> => {
+    if (!isConnected || !signingClient || !bech32Address) {
+      throw new Error("Wallet not properly connected.");
+    }
+
+    try {
+      return await attemptTransfer(recipientAddress, amount, memo);
+    } catch (err: any) {
+      const msg = err?.message || "";
+
+      if (msg.includes("authorization not found")) {
+        console.warn("No grant found. Attempting to grant permission...");
+
+        await grantPermission();
+
+        // Retry once after granting
+        return await attemptTransfer(recipientAddress, amount, memo);
+      }
+
+      console.error("Transfer failed:", err);
+      throw err;
+    }
+  };
+
+  const attemptTransfer = async (
+    to: string,
+    amount: Coin[],
+    memo = ""
+  ): Promise<string> => {
+    const result = await signingClient!.sendTokens(
+      bech32Address!,
+      to,
+      amount,
+      "auto",
+      memo
+    );
+    if (result.code !== 0) {
+      throw new Error(`Token transfer failed: ${result.rawLog}`);
+    }
+    return result.transactionHash;
+  };
+
+  const getMetaBalance = async (address: string, denom = "uxion") => {
+    if (!queryClient) throw new Error("Query client is not initialized.");
+    try {
+      const balance = await queryClient.getBalance(address, denom);
+      return balance?.amount ? uxionToXion(balance.amount) : "0";
+    } catch (error) {
+      console.error("Failed to fetch balance:", error);
+      return "0";
+    }
+  };
+
+  const getWalletQuery = async () => {
+    if (!queryClient) throw new Error("Query client is not initialized.");
+    try {
+      const res = await queryClient.queryContractSmart("", { get_count: {} });
+      console.log("Contract query result:", res);
+      return res;
+    } catch (err) {
+      console.error("Smart contract query failed:", err);
+      throw err;
+    }
+  };
+
+  return {
+    handleSign,
+    grantPermission,
+    transferTokens,
+    getMetaBalance,
+    getWalletQuery,
+    signArbResponse,
+  };
+}
+
+// import { useAuth } from "@/context/useAuth";
+// import useMeta from "@/hook/useMeta";
+// import { uxionToXion } from "@/helper/convert";
+// import { Coin } from "@cosmjs/stargate";
+// import {  useState } from "react";
+// import { Timestamp } from "cosmjs-types/google/protobuf/timestamp";
+// import { GenericAuthorization } from "cosmjs-types/cosmos/authz/v1beta1/authz";
+// import { MsgGrant } from "cosmjs-types/cosmos/authz/v1beta1/tx";
+
+// export default function useXion() {
+//   const { bech32Address, isConnected, isConnecting, queryClient, signingClient, signArb } = useMeta();
+//   const { user } = useAuth();
+//   const [signArbResponse, setSignArbResponse] = useState<string>("");
+
+//   console.log({ user, isConnecting });
+
+//   const handleSign = async (): Promise<void> => {
+//     if (signingClient?.granteeAddress) {
+//       try {
+//         const response = await signArb?.(signingClient.granteeAddress, "abstraxion challenge");
+//         console.log("Sign response:", response);
+//         if (response) setSignArbResponse(response);
+//       } catch (error) {
+//         console.error("Error during signArb:", error);
+//       }
+//     }
+//   };
+
+//   const grantPermission = async (): Promise<string> => {
+//     if (!signingClient || !bech32Address) {
+//       throw new Error("Wallet is not connected properly for granting.");
+//     }
+
+//     const grantee = signingClient.granteeAddress;
+//     if (!grantee) {
+//       throw new Error("No grantee address available.");
+//     }
+
+//     try {
+//       // Check if grant already exists first
+//       const existingGrant = await queryClient?.authz.grants(
+//         bech32Address,
+//         grantee,
+//         "/cosmos.bank.v1beta1.MsgSend"
+//       );
+
+//       if (existingGrant && existingGrant.grants.length > 0) {
+//         console.log("Grant already exists");
+//         return "Grant already exists";
+//       }
+
+//       // Create new grant if it doesn't exist
+//       const expiration = new Date(Date.now() + 86400 * 1000); // 1 day
+//       const timestamp = Timestamp.fromPartial({
+//         seconds: BigInt(Math.floor(expiration.getTime() / 1000)),
+//         nanos: 0,
+//       });
+
+//       const grantMsg = MsgGrant.fromPartial({
+//         granter: bech32Address,
+//         grantee: grantee,
+//         grant: {
+//           authorization: {
+//             typeUrl: "/cosmos.authz.v1beta1.GenericAuthorization",
+//             value: GenericAuthorization.encode({
+//               msg: "/cosmos.bank.v1beta1.MsgSend",
+//             }).finish(),
+//           },
+//           expiration: timestamp,
+//         },
+//       });
+
+//       const result = await signingClient.signAndBroadcast(
+//         bech32Address,
+//         [{
+//           typeUrl: "/cosmos.authz.v1beta1.MsgGrant",
+//           value: grantMsg,
+//         }],
+//         "auto"
+//       );
+
+//       if (result.code !== 0) {
+//         throw new Error(`Grant failed: ${result.rawLog}`);
+//       }
+
+//       return result.transactionHash;
+//     } catch (error) {
+//       console.error("Error in grantPermission:", error);
+//       throw error;
+//     }
+//   };
+
+//   const transferTokens = async (
+//     recipientAddress: string,
+//     amount: Coin[],
+//     memo: string = ""
+//   ): Promise<string> => {
+//     if (!isConnected || !signingClient) {
+//       throw new Error("Wallet not connected. Please connect your wallet.");
+//     }
+
+//     try {
+//       // First try the transfer directly
+//       try {
+//         const result = await signingClient.sendTokens(
+//           bech32Address,
+//           recipientAddress,
+//           amount,
+//           "auto",
+//           memo
+//         );
+//         return result.transactionHash;
+//       } catch (transferError) {
+//         // If transfer fails due to missing grant, try to create one
+//         if (transferError.message.includes("authorization not found")) {
+//           console.log("No grant found, attempting to create one...");
+//           await grantPermission();
+
+//           // Retry the transfer after granting permission
+//           const retryResult = await signingClient.sendTokens(
+//             bech32Address,
+//             recipientAddress,
+//             amount,
+//             "auto",
+//             memo
+//           );
+//           return retryResult.transactionHash;
+//         }
+//         throw transferError;
+//       }
+//     } catch (error) {
+//       console.error("Error transferring tokens:", error);
+//       throw error;
+//     }
+//   };
+
+//   const getMetaBalance = async (address: string, denom = "uxion") => {
+//     if (!queryClient) {
+//       throw new Error("Query client is not initialized.");
+//     }
+//     try {
+//       const bal = await queryClient.getBalance(address, denom);
+//       return bal?.amount ? uxionToXion(bal.amount) : undefined;
+//     } catch (error) {
+//       console.error("Error fetching balance:", error);
+//     }
+//   };
+
+//   const getWalletQuery = async () => {
+//     if (!queryClient) throw new Error("Query client not initialized.");
+//     try {
+//       const response = await queryClient.queryContractSmart("", { get_count: {} });
+//       console.log(response);
+//     } catch (error) {
+//       console.error("Error querying wallet:", error);
+//     }
+//   };
+
+//   return {
+//     transferTokens,
+//     getMetaBalance,
+//     getWalletQuery,
+//     handleSign,
+//     signArbResponse,
+//     grantPermission,
+//   };
+// }
+
+// const transferTokens = async (
+//   recipientAddress: string,
+//   amount: Coin[],
+//   memo: string = ""
+// ): Promise<string> => {
+//   try {
+//     if (!isConnected || !signingClient) {
+//       throw new Error("Wallet not connected. Please connect your wallet.");
+//     }
+
+//     if (!recipientAddress.startsWith("xion")) {
+//       throw new Error("Invalid recipient address. Must be a valid Xion address.");
+//     }
+
+//     if (!amount.length || amount.some((coin) => !coin.denom || !coin.amount)) {
+//       throw new Error("Invalid amount. Must specify valid denomination and amount.");
+//     }
+
+//     // Ensure grant exists before sending tokens
+//     const grantee = signingClient.granteeAddress;
+//     console.log("Grantee Address:", signingClient.granteeAddress);
+//     if (!grantee) {
+//       throw new Error("No grantee address available.");
+//     }
+
+//     // Attempt to create a grant
+//     await grantPermission();
+//     // const txHash = await grantPermission();
+//       console.log("Grant Tx Hash: succes in grantPermission ",);
+
+//     // Check balance
+//     const balance = await queryClient?.getBalance(bech32Address, amount[0].denom);
+//     const totalNeeded = Number(amount[0].amount) + 1000; // Approximate gas fee
+//     if (!balance || Number(balance.amount) < totalNeeded) {
+//       throw new Error(
+//         `Insufficient balance. Available: ${uxionToXion(balance?.amount || "0")} ${
+//           amount[0].denom
+//         }`
+//       );
+//     }
+
+//     // Send tokens
+//     const result = await signingClient.sendTokens(
+//       bech32Address,
+//       recipientAddress,
+//       amount,
+//       "auto",
+//       memo
+//     );
+
+//     return result.transactionHash;
+//   } catch (error) {
+//     console.error("Error transferring tokens:", error);
+//     throw error;
+//   }
+// };
+// const grantPermission = async (): Promise<string> => {
+//   if (!signingClient || !bech32Address) {
+//     throw new Error("Wallet is not connected properly for granting.");
+//   }
+
+//   const grantee = signingClient.granteeAddress;
+//   console.log({grantee})
+//   if (!grantee) {
+//     throw new Error("No grantee address available.");
+//   }
+
+//   try {
+//     // Create a new grant
+//     const now = new Date();
+//     const expiration = new Date(now.getTime() + 60 * 60 * 24 * 1000); // 1 day later
+//     const timestamp = Timestamp.fromPartial({
+//       seconds: BigInt(Math.trunc(expiration.getTime() / 1000)),
+//       nanos: 0,
+//     });
+
+//     const grantMsg: MsgGrant = {
+//       granter: bech32Address,
+//       grantee: grantee,
+//       grant: {
+//         authorization: {
+//           typeUrl: "/cosmos.authz.v1beta1.GenericAuthorization",
+//           value: GenericAuthorization.encode({
+//             msg: "/cosmos.bank.v1beta1.MsgSend",
+//           }).finish(),
+//         },
+//         expiration: timestamp,
+//       },
+//     };
+
+//     const fee = "auto";
+//     console.log(`before signingClient.signAndBroadcast`)
+//     const result = await signingClient.signAndBroadcast(
+//       bech32Address,
+//       [
+//         {
+//           typeUrl: "/cosmos.authz.v1beta1.MsgGrant",
+//           value: grantMsg,
+//         },
+//       ],
+//       fee
+//     );
+
+//     console.log("Grant result:", result);
+//     if (result.code !== 0) {
+//       throw new Error(`Grant failed: ${result.rawLog}`);
+//     }
+
+//     return result.transactionHash;
+//   } catch (error) {
+//     console.log(error)
+//     // Ignore "grant already exists" error
+//     if (error.message.includes("authorization already exists")) {
+//       console.log("Grant already exists, proceeding...");
+//       return "Grant already exists";
+//     }
+//     console.error("Error granting permission:", error);
+//     throw error;
+//   }
+// };
+// import { useAuth } from "@/context/useAuth";
+// import useMeta from "@/hook/useMeta";
+// import { uxionToXion } from "@/helper/convert";
+// import { Coin, StargateClient } from "@cosmjs/stargate";
+// import { useEffect, useState } from "react";
+// import { Timestamp } from "cosmjs-types/google/protobuf/timestamp";
+// import { GenericAuthorization } from "cosmjs-types/cosmos/authz/v1beta1/authz";
+// import { MsgGrant } from "cosmjs-types/cosmos/authz/v1beta1/tx";
+// import { Tendermint34Client } from "@cosmjs/tendermint-rpc";
+// import { QueryGrantsRequest, QueryGrantsResponse } from "cosmjs-types/cosmos/authz/v1beta1/query";
+
+// export default function useXion() {
+//   const { bech32Address, isConnected, isConnecting, queryClient, signingClient, signArb } = useMeta();
+//   const { user } = useAuth();
+//   const [signArbResponse, setSignArbResponse] = useState<string>("");
+
+//   // RPC URL for Xion testnet
+//   const XION_RPC_URL = "https://rpc.xion-testnet-2.burnt.com";
+
+//   // Initialize Tendermint34Client
+//   const [tmClient, setTmClient] = useState<Tendermint34Client | null>(null);
+//   useEffect(() => {
+//     Tendermint34Client.connect(XION_RPC_URL)
+//       .then((client) => setTmClient(client))
+//       .catch((error) => console.error("Failed to connect Tendermint34Client:", error));
+//     return () => tmClient?.disconnect();
+//   }, [tmClient]);
+
+//   console.log({ user, isConnecting });
+
+//   const handleSign = async (): Promise<void> => {
+//     if (signingClient?.granteeAddress) {
+//       try {
+//         const response = await signArb?.(signingClient.granteeAddress, "abstraxion challenge");
+//         console.log("Sign response:", response);
+//         if (response) setSignArbResponse(response);
+//       } catch (error) {
+//         console.error("Error during signArb:", error);
+//       }
+//     }
+//   };
+
+//   const grantPermission = async (): Promise<string> => {
+//     if (!signingClient || !bech32Address) {
+//       throw new Error("Wallet is not connected properly for granting.");
+//     }
+
+//     const grantee = signingClient.granteeAddress;
+//     if (!grantee) {
+//       throw new Error("No grantee address available.");
+//     }
+
+//     try {
+//       // Ensure tmClient is initialized
+//       if (!tmClient) {
+//         throw new Error("Tendermint34Client is not initialized.");
+//       }
+
+//       // Check if a grant already exists
+//       const query = QueryGrantsRequest.encode({
+//         granter: bech32Address,
+//         grantee: grantee,
+//         msgTypeUrl: "/cosmos.bank.v1beta1.MsgSend",
+//       }).finish();
+
+//       const response = await tmClient.abciQuery({
+//         path: "/cosmos.authz.v1beta1.Query/Grants",
+//         data: query,
+//       });
+
+//       const grantQuery = QueryGrantsResponse.decode(response.value);
+
+//       if (grantQuery.grants.length > 0) {
+//         console.log("Grant already exists:", grantQuery);
+//         return "Grant already exists";
+//       }
+
+//       // Create a new grant
+//       const now = new Date();
+//       const expiration = new Date(now.getTime() + 60 * 60 * 24 * 1000); // 1 day later
+//       const timestamp = Timestamp.fromPartial({
+//         seconds: BigInt(Math.trunc(expiration.getTime() / 1000)),
+//         nanos: 0,
+//       });
+
+//       const grantMsg: MsgGrant = {
+//         granter: bech32Address,
+//         grantee: grantee,
+//         grant: {
+//           authorization: {
+//             typeUrl: "/cosmos.authz.v1beta1.GenericAuthorization",
+//             value: GenericAuthorization.encode({
+//               msg: "/cosmos.bank.v1beta1.MsgSend",
+//             }).finish(),
+//           },
+//           expiration: timestamp,
+//         },
+//       };
+
+//       const fee = "auto";
+//       const result = await signingClient.signAndBroadcast(
+//         bech32Address,
+//         [
+//           {
+//             typeUrl: "/cosmos.authz.v1beta1.MsgGrant",
+//             value: grantMsg,
+//           },
+//         ],
+//         fee
+//       );
+
+//       console.log("Grant result:", result);
+//       if (result.code !== 0) {
+//         throw new Error(`Grant failed: ${result.rawLog}`);
+//       }
+
+//       return result.transactionHash;
+//     } catch (error) {
+//       console.error("Error granting permission:", error);
+//       throw error;
+//     }
+//   };
+
+//   const transferTokens = async (
+//     recipientAddress: string,
+//     amount: Coin[],
+//     memo: string = ""
+//   ): Promise<string> => {
+//     try {
+//       if (!isConnected || !signingClient) {
+//         throw new Error("Wallet not connected. Please connect your wallet.");
+//       }
+
+//       if (!recipientAddress.startsWith("xion")) {
+//         throw new Error("Invalid recipient address. Must be a valid Xion address.");
+//       }
+
+//       if (!amount.length || amount.some((coin) => !coin.denom || !coin.amount)) {
+//         throw new Error("Invalid amount. Must specify valid denomination and amount.");
+//       }
+
+//       // Ensure grant exists before sending tokens
+//       const grantee = signingClient.granteeAddress;
+//       if (!grantee) {
+//         throw new Error("No grantee address available.");
+//       }
+
+//       // Ensure tmClient is initialized
+//       if (!tmClient) {
+//         throw new Error("Tendermint34Client is not initialized.");
+//       }
+
+//       const query = QueryGrantsRequest.encode({
+//         granter: bech32Address,
+//         grantee: grantee,
+//         msgTypeUrl: "/cosmos.bank.v1beta1.MsgSend",
+//       }).finish();
+
+//       const response = await tmClient.abciQuery({
+//         path: "/cosmos.authz.v1beta1.Query/Grants",
+//         data: query,
+//       });
+
+//       const grantQuery = QueryGrantsResponse.decode(response.value);
+
+//       if (!grantQuery.grants.length) {
+//         console.log("No grant found. Attempting to create one...");
+//         await grantPermission();
+//       }
+
+//       // Check balance
+//       const balance = await queryClient?.getBalance(bech32Address, amount[0].denom);
+//       const totalNeeded = Number(amount[0].amount) + 1000; // Approximate gas fee
+//       if (!balance || Number(balance.amount) < totalNeeded) {
+//         throw new Error(
+//           `Insufficient balance. Available: ${uxionToXion(balance?.amount || "0")} ${
+//             amount[0].denom
+//           }`
+//         );
+//       }
+
+//       // Send tokens
+//       const result = await signingClient.sendTokens(
+//         bech32Address,
+//         recipientAddress,
+//         amount,
+//         "auto",
+//         memo
+//       );
+
+//       return result.transactionHash;
+//     } catch (error) {
+//       console.error("Error transferring tokens:", error);
+//       throw error;
+//     }
+//   };
+
+//   const getMetaBalance = async (address: string, denom = "uxion") => {
+//     if (!queryClient) {
+//       throw new Error("Query client is not initialized.");
+//     }
+//     try {
+//       const bal = await queryClient.getBalance(address, denom);
+//       return bal?.amount ? uxionToXion(bal.amount) : undefined;
+//     } catch (error) {
+//       console.error("Error fetching balance:", error);
+//     }
+//   };
+
+//   const getWalletQuery = async () => {
+//     if (!queryClient) throw new Error("Query client not initialized.");
+//     try {
+//       const response = await queryClient.queryContractSmart("", { get_count: {} });
+//       console.log(response);
+//     } catch (error) {
+//       console.error("Error querying wallet:", error);
+//     }
+//   };
+
+//   return {
+//     transferTokens,
+//     getMetaBalance,
+//     getWalletQuery,
+//     handleSign,
+//     signArbResponse,
+//     grantPermission,
+//   };
+// }
+
+// import { useAuth } from "@/context/useAuth";
+// import useMeta from "@/hook/useMeta";
+// import { uxionToXion } from "@/helper/convert";
+// import { Coin, StargateClient } from "@cosmjs/stargate";
+// import { useEffect, useState } from "react";
+// import { Timestamp } from "cosmjs-types/google/protobuf/timestamp";
+// import { GenericAuthorization } from "cosmjs-types/cosmos/authz/v1beta1/authz";
+// import { MsgGrant } from "cosmjs-types/cosmos/authz/v1beta1/tx";
+// import { Tendermint34Client } from "@cosmjs/tendermint-rpc"; // Import Tendermint34Client
+// import { QueryGrantsRequest, QueryGrantsResponse } from "cosmjs-types/cosmos/authz/v1beta1/query"; // Import authz query types
+
+// export default function useXion() {
+//   const { bech32Address, isConnected, isConnecting, queryClient, signingClient, signArb } = useMeta();
+//   const { user } = useAuth();
+//   const [signArbResponse, setSignArbResponse] = useState<string>("");
+
+//   // RPC URL for Xion testnet
+//   const XION_RPC_URL = "https://rpc.xion-testnet-2.burnt.com";
+
+//   console.log({ user, isConnecting });
+
+//   const handleSign = async (): Promise<void> => {
+//     if (signingClient?.granteeAddress) {
+//       try {
+//         const response = await signArb?.(signingClient.granteeAddress, "abstraxion challenge");
+//         console.log("Sign response:", response);
+//         if (response) setSignArbResponse(response);
+//       } catch (error) {
+//         console.error("Error during signArb:", error);
+//       }
+//     }
+//   };
+
+//   const grantPermission = async (): Promise<string> => {
+//     if (!signingClient || !bech32Address) {
+//       throw new Error("Wallet is not connected properly for granting.");
+//     }
+
+//     const grantee = signingClient.granteeAddress;
+//     if (!grantee) {
+//       throw new Error("No grantee address available.");
+//     }
+
+//     try {
+//       // Create a Tendermint34Client for ABCI queries
+//       const tmClient = await Tendermint34Client.connect(XION_RPC_URL);
+
+//       // Encode the QueryGrantsRequest
+//       const query = QueryGrantsRequest.encode({
+//         granter: bech32Address,
+//         grantee: grantee,
+//         msgTypeUrl: "/cosmos.bank.v1beta1.MsgSend",
+//       }).finish();
+
+//       // Perform the ABCI query
+//       const response = await tmClient.abciQuery({
+//         path: "/cosmos.authz.v1beta1.Query/Grants",
+//         data: query,
+//       });
+
+//       // Decode the response
+//       const grantQuery = QueryGrantsResponse.decode(response.value);
+
+//       if (grantQuery.grants.length > 0) {
+//         console.log("Grant already exists:", grantQuery);
+//         tmClient.disconnect();
+//         return "Grant already exists";
+//       }
+
+//       // Disconnect Tendermint client
+//       tmClient.disconnect();
+
+//       // Create a new grant
+//       const now = new Date();
+//       const expiration = new Date(now.getTime() + 60 * 60 * 24 * 1000); // 1 day later
+//       const timestamp = Timestamp.fromPartial({
+//         seconds: BigInt(Math.trunc(expiration.getTime() / 1000)),
+//         nanos: 0,
+//       });
+
+//       const grantMsg: MsgGrant = {
+//         granter: bech32Address,
+//         grantee: grantee,
+//         grant: {
+//           authorization: {
+//             typeUrl: "/cosmos.authz.v1beta1.GenericAuthorization",
+//             value: GenericAuthorization.encode({
+//               msg: "/cosmos.bank.v1beta1.MsgSend",
+//             }).finish(),
+//           },
+//           expiration: timestamp,
+//         },
+//       };
+
+//       const fee = "auto";
+//       const result = await signingClient.signAndBroadcast(
+//         bech32Address,
+//         [
+//           {
+//             typeUrl: "/cosmos.authz.v1beta1.MsgGrant",
+//             value: grantMsg,
+//           },
+//         ],
+//         fee
+//       );
+
+//       console.log("Grant result:", result);
+//       if (result.code !== 0) {
+//         throw new Error(`Grant failed: ${result.rawLog}`);
+//       }
+
+//       return result.transactionHash;
+//     } catch (error) {
+//       console.error("Error granting permission:", error);
+//       throw error;
+//     }
+//   };
+
+//   const transferTokens = async (
+//     recipientAddress: string,
+//     amount: Coin[],
+//     memo: string = ""
+//   ): Promise<string> => {
+//     try {
+//       if (!isConnected || !signingClient) {
+//         throw new Error("Wallet not connected. Please connect your wallet.");
+//       }
+
+//       if (!recipientAddress.startsWith("xion")) {
+//         throw new Error("Invalid recipient address. Must be a valid Xion address.");
+//       }
+
+//       if (!amount.length || amount.some((coin) => !coin.denom || !coin.amount)) {
+//         throw new Error("Invalid amount. Must specify valid denomination and amount.");
+//       }
+
+//       // Ensure grant exists before sending tokens
+//       const grantee = signingClient.granteeAddress;
+//       if (!grantee) {
+//         throw new Error("No grantee address available.");
+//       }
+
+//       // Create a Tendermint34Client for ABCI queries
+//       const tmClient = await Tendermint34Client.connect(XION_RPC_URL);
+
+//       // Encode the QueryGrantsRequest
+//       const query = QueryGrantsRequest.encode({
+//         granter: bech32Address,
+//         grantee: grantee,
+//         msgTypeUrl: "/cosmos.bank.v1beta1.MsgSend",
+//       }).finish();
+
+//       // Perform the ABCI query
+//       const response = await tmClient.abciQuery({
+//         path: "/cosmos.authz.v1beta1.Query/Grants",
+//         data: query,
+//       });
+
+//       // Decode the response
+//       const grantQuery = QueryGrantsResponse.decode(response.value);
+
+//       if (!grantQuery.grants.length) {
+//         console.log("No grant found. Attempting to create one...");
+//         tmClient.disconnect();
+//         await grantPermission();
+//       } else {
+//         tmClient.disconnect();
+//       }
+
+//       // Check balance
+//       const balance = await queryClient?.getBalance(bech32Address, amount[0].denom);
+//       const totalNeeded = Number(amount[0].amount) + 1000; // Approximate gas fee
+//       if (!balance || Number(balance.amount) < totalNeeded) {
+//         throw new Error(
+//           `Insufficient balance. Available: ${uxionToXion(balance?.amount || "0")} ${
+//             amount[0].denom
+//           }`
+//         );
+//       }
+
+//       // Send tokens
+//       const result = await signingClient.sendTokens(
+//         bech32Address,
+//         recipientAddress,
+//         amount,
+//         "auto",
+//         memo
+//       );
+
+//       return result.transactionHash;
+//     } catch (error) {
+//       console.error("Error transferring tokens:", error);
+//       throw error;
+//     }
+//   };
+
+//   const getMetaBalance = async (address: string, denom = "uxion") => {
+//     if (!queryClient) {
+//       throw new Error("Query client is not initialized.");
+//     }
+//     try {
+//       const bal = await queryClient.getBalance(address, denom);
+//       return bal?.amount ? uxionToXion(bal.amount) : undefined;
+//     } catch (error) {
+//       console.error("Error fetching balance:", error);
+//     }
+//   };
+
+//   const getWalletQuery = async () => {
+//     if (!queryClient) throw new Error("Query client not initialized.");
+//     try {
+//       const response = await queryClient.queryContractSmart("", { get_count: {} });
+//       console.log(response);
+//     } catch (error) {
+//       console.error("Error querying wallet:", error);
+//     }
+//   };
+
+//   return {
+//     transferTokens,
+//     getMetaBalance,
+//     getWalletQuery,
+//     handleSign,
+//     signArbResponse,
+//     grantPermission,
+//   };
+// }
+//? use
+// import { useAuth } from "@/context/useAuth";
+// import useMeta from "@/hook/useMeta";
+// import { uxionToXion } from "@/helper/convert";
+// import { Coin } from "@cosmjs/stargate";
+// import { useEffect, useState } from "react";
+// import { Timestamp } from "cosmjs-types/google/protobuf/timestamp";
+// import { GenericAuthorization } from "cosmjs-types/cosmos/authz/v1beta1/authz";
+// import { MsgGrant } from "cosmjs-types/cosmos/authz/v1beta1/tx";
+
+// export default function useXion() {
+//   const { bech32Address, isConnected, isConnecting, queryClient, signingClient, signArb } = useMeta();
+//   const { user } = useAuth();
+//   const [signArbResponse, setSignArbResponse] = useState<string>("");
+
+//   console.log({ user, isConnecting });
+
+//   const handleSign = async (): Promise<void> => {
+//     if (signingClient?.granteeAddress) {
+//       try {
+//         const response = await signArb?.(signingClient.granteeAddress, "abstraxion challenge");
+//         console.log("Sign response:", response);
+//         if (response) setSignArbResponse(response);
+//       } catch (error) {
+//         console.error("Error during signArb:", error);
+//       }
+//     }
+//   };
+
+//   const grantPermission = async (): Promise<string> => {
+//     if (!signingClient || !bech32Address) {
+//       throw new Error("Wallet is not connected properly for granting.");
+//     }
+
+//     const grantee = signingClient.granteeAddress;
+//     if (!grantee) {
+//       throw new Error("No grantee address available.");
+//     }
+
+//     try {
+//       // Create a new grant
+//       const now = new Date();
+//       const expiration = new Date(now.getTime() + 60 * 60 * 24 * 1000); // 1 day later
+//       const timestamp = Timestamp.fromPartial({
+//         seconds: BigInt(Math.trunc(expiration.getTime() / 1000)),
+//         nanos: 0,
+//       });
+
+//       const grantMsg: MsgGrant = {
+//         granter: bech32Address,
+//         grantee: grantee,
+//         grant: {
+//           authorization: {
+//             typeUrl: "/cosmos.authz.v1beta1.GenericAuthorization",
+//             value: GenericAuthorization.encode({
+//               msg: "/cosmos.bank.v1beta1.MsgSend",
+//             }).finish(),
+//           },
+//           expiration: timestamp,
+//         },
+//       };
+
+//       const fee = "auto";
+//       const result = await signingClient.signAndBroadcast(
+//         bech32Address,
+//         [
+//           {
+//             typeUrl: "/cosmos.authz.v1beta1.MsgGrant",
+//             value: grantMsg,
+//           },
+//         ],
+//         fee
+//       );
+
+//       console.log("Grant result:", result);
+//       if (result.code !== 0) {
+//         throw new Error(`Grant failed: ${result.rawLog}`);
+//       }
+
+//       return result.transactionHash;
+//     } catch (error) {
+//       // Ignore "grant already exists" error
+//       if (error.message.includes("authorization already exists")) {
+//         console.log("Grant already exists, proceeding...");
+//         return "Grant already exists";
+//       }
+//       console.error("Error granting permission:", error);
+//       throw error;
+//     }
+//   };
+
+//   const transferTokens = async (
+//     recipientAddress: string,
+//     amount: Coin[],
+//     memo: string = ""
+//   ): Promise<string> => {
+//     try {
+//       if (!isConnected || !signingClient) {
+//         throw new Error("Wallet not connected. Please connect your wallet.");
+//       }
+
+//       if (!recipientAddress.startsWith("xion")) {
+//         throw new Error("Invalid recipient address. Must be a valid Xion address.");
+//       }
+
+//       if (!amount.length || amount.some((coin) => !coin.denom || !coin.amount)) {
+//         throw new Error("Invalid amount. Must specify valid denomination and amount.");
+//       }
+
+//       // Ensure grant exists before sending tokens
+//       const grantee = signingClient.granteeAddress;
+//       if (!grantee) {
+//         throw new Error("No grantee address available.");
+//       }
+
+//       // Attempt to create a grant
+//       await grantPermission();
+
+//       // Check balance
+//       const balance = await queryClient?.getBalance(bech32Address, amount[0].denom);
+//       const totalNeeded = Number(amount[0].amount) + 1000; // Approximate gas fee
+//       if (!balance || Number(balance.amount) < totalNeeded) {
+//         throw new Error(
+//           `Insufficient balance. Available: ${uxionToXion(balance?.amount || "0")} ${
+//             amount[0].denom
+//           }`
+//         );
+//       }
+
+//       // Send tokens
+//       const result = await signingClient.sendTokens(
+//         bech32Address,
+//         recipientAddress,
+//         amount,
+//         "auto",
+//         memo
+//       );
+
+//       return result.transactionHash;
+//     } catch (error) {
+//       console.error("Error transferring tokens:", error);
+//       throw error;
+//     }
+//   };
+
+//   const getMetaBalance = async (address: string, denom = "uxion") => {
+//     if (!queryClient) {
+//       throw new Error("Query client is not initialized.");
+//     }
+//     try {
+//       const bal = await queryClient.getBalance(address, denom);
+//       return bal?.amount ? uxionToXion(bal.amount) : undefined;
+//     } catch (error) {
+//       console.error("Error fetching balance:", error);
+//     }
+//   };
+
+//   const getWalletQuery = async () => {
+//     if (!queryClient) throw new Error("Query client not initialized.");
+//     try {
+//       const response = await queryClient.queryContractSmart("", { get_count: {} });
+//       console.log(response);
+//     } catch (error) {
+//       console.error("Error querying wallet:", error);
+//     }
+//   };
+
+//   return {
+//     transferTokens,
+//     getMetaBalance,
+//     getWalletQuery,
+//     handleSign,
+//     signArbResponse,
+//     grantPermission,
+//   };
+// }
+//?
+
+// import { useAuth } from "@/context/useAuth";
+// import useMeta from "@/hook/useMeta";
+// import { uxionToXion } from "@/helper/convert";
+// import { Coin, StargateClient } from "@cosmjs/stargate"; // Import StargateClient
+// import { useEffect, useState } from "react";
+// import { Timestamp } from "cosmjs-types/google/protobuf/timestamp";
+// import { GenericAuthorization } from "cosmjs-types/cosmos/authz/v1beta1/authz";
+// import { MsgGrant } from "cosmjs-types/cosmos/authz/v1beta1/tx";
+
+// export default function useXion() {
+//   const { bech32Address, isConnected, isConnecting, queryClient, signingClient, signArb } = useMeta();
+//   const { user } = useAuth();
+//   const [signArbResponse, setSignArbResponse] = useState<string>("");
+
+//   // RPC URL for Xion testnet
+//   const XION_RPC_URL = "https://rpc.xion-testnet-2.burnt.com";
+
+//   console.log({ user, isConnecting });
+
+//   const handleSign = async (): Promise<void> => {
+//     if (signingClient?.granteeAddress) {
+//       try {
+//         const response = await signArb?.(signingClient.granteeAddress, "abstraxion challenge");
+//         console.log("Sign response:", response);
+//         if (response) setSignArbResponse(response);
+//       } catch (error) {
+//         console.error("Error during signArb:", error);
+//       }
+//     }
+//   };
+
+//   const grantPermission = async (): Promise<string> => {
+//     if (!signingClient || !bech32Address) {
+//       throw new Error("Wallet is not connected properly for granting.");
+//     }
+
+//     const grantee = signingClient.granteeAddress;
+//     if (!grantee) {
+//       throw new Error("No grantee address available.");
+//     }
+
+//     try {
+//       // Create a StargateClient instance for ABCI queries
+//       const stargateClient = await StargateClient.connect(XION_RPC_URL);
+
+//       // Check if a grant already exists
+//       const grantQuery = await stargateClient.queryAbci("/cosmos.authz.v1beta1.Grants", {
+//         granter: bech32Address,
+//         grantee: grantee,
+//         msg_type_url: "/cosmos.bank.v1beta1.MsgSend",
+//       });
+
+//       if (grantQuery?.grants?.length > 0) {
+//         console.log("Grant already exists:", grantQuery);
+//         return "Grant already exists";
+//       }
+
+//       // Create a new grant
+//       const now = new Date();
+//       const expiration = new Date(now.getTime() + 60 * 60 * 24 * 1000); // 1 day later
+//       const timestamp = Timestamp.fromPartial({
+//         seconds: BigInt(Math.trunc(expiration.getTime() / 1000)),
+//         nanos: 0,
+//       });
+
+//       const grantMsg: MsgGrant = {
+//         granter: bech32Address,
+//         grantee: grantee,
+//         grant: {
+//           authorization: {
+//             typeUrl: "/cosmos.authz.v1beta1.GenericAuthorization",
+//             value: GenericAuthorization.encode({
+//               msg: "/cosmos.bank.v1beta1.MsgSend",
+//             }).finish(),
+//           },
+//           expiration: timestamp,
+//         },
+//       };
+
+//       const fee = "auto";
+//       const result = await signingClient.signAndBroadcast(
+//         bech32Address,
+//         [
+//           {
+//             typeUrl: "/cosmos.authz.v1beta1.MsgGrant",
+//             value: grantMsg,
+//           },
+//         ],
+//         fee
+//       );
+
+//       console.log("Grant result:", result);
+//       if (result.code !== 0) {
+//         throw new Error(`Grant failed: ${result.rawLog}`);
+//       }
+
+//       return result.transactionHash;
+//     } catch (error) {
+//       console.error("Error granting permission:", error);
+//       throw error;
+//     }
+//   };
+
+//   const transferTokens = async (
+//     recipientAddress: string,
+//     amount: Coin[],
+//     memo: string = ""
+//   ): Promise<string> => {
+//     try {
+//       if (!isConnected || !signingClient) {
+//         throw new Error("Wallet not connected. Please connect your wallet.");
+//       }
+
+//       if (!recipientAddress.startsWith("xion")) {
+//         throw new Error("Invalid recipient address. Must be a valid Xion address.");
+//       }
+
+//       if (!amount.length || amount.some((coin) => !coin.denom || !coin.amount)) {
+//         throw new Error("Invalid amount. Must specify valid denomination and amount.");
+//       }
+
+//       // Ensure grant exists before sending tokens
+//       const grantee = signingClient.granteeAddress;
+//       if (!grantee) {
+//         throw new Error("No grantee address available.");
+//       }
+
+//       // Create a StargateClient instance for ABCI queries
+//       const stargateClient = await StargateClient.connect(XION_RPC_URL);
+
+//       const grantQuery = await stargateClient.queryAbci("/cosmos.authz.v1beta1.Grants", {
+//         granter: bech32Address,
+//         grantee: grantee,
+//         msg_type_url: "/cosmos.bank.v1beta1.MsgSend",
+//       });
+
+//       if (!grantQuery?.grants?.length) {
+//         console.log("No grant found. Attempting to create one...");
+//         await grantPermission();
+//       }
+
+//       // Check balance
+//       const balance = await queryClient?.getBalance(bech32Address, amount[0].denom);
+//       const totalNeeded = Number(amount[0].amount) + 1000; // Approximate gas fee
+//       if (!balance || Number(balance.amount) < totalNeeded) {
+//         throw new Error(
+//           `Insufficient balance. Available: ${uxionToXion(balance?.amount || "0")} ${
+//             amount[0].denom
+//           }`
+//         );
+//       }
+
+//       // Send tokens
+//       const result = await signingClient.sendTokens(
+//         bech32Address,
+//         recipientAddress,
+//         amount,
+//         "auto",
+//         memo
+//       );
+
+//       return result.transactionHash;
+//     } catch (error) {
+//       console.error("Error transferring tokens:", error);
+//       throw error;
+//     }
+//   };
+
+//   const getMetaBalance = async (address: string, denom = "uxion") => {
+//     if (!queryClient) {
+//       throw new Error("Query client is not initialized.");
+//     }
+//     try {
+//       const bal = await queryClient.getBalance(address, denom);
+//       return bal?.amount ? uxionToXion(bal.amount) : undefined;
+//     } catch (error) {
+//       console.error("Error fetching balance:", error);
+//     }
+//   };
+
+//   const getWalletQuery = async () => {
+//     if (!queryClient) throw new Error("Query client not initialized.");
+//     try {
+//       const response = await queryClient.queryContractSmart("", { get_count: {} });
+//       console.log(response);
+//     } catch (error) {
+//       console.error("Error querying wallet:", error);
+//     }
+//   };
+
+//   return {
+//     transferTokens,
+//     getMetaBalance,
+//     getWalletQuery,
+//     handleSign,
+//     signArbResponse,
+//     grantPermission,
+//   };
+// }
+
+// import useXion from "./useXion";
+// import { Coin } from "@cosmjs/stargate";
+
+// function TransferComponent() {
+//   const { transferTokens, grantPermission, getMetaBalance } = useXion();
+
+//   const handleTransfer = async () => {
+//     try {
+//       // Check balance
+//       const balance = await getMetaBalance("xion1youraddresshere", "uxion");
+//       console.log("Balance:", balance);
+
+//       // Transfer tokens (grantPermission is called internally if needed)
+//       const recipient = "xion1recipientaddresshere";
+//       const amount: Coin[] = [{ denom: "uxion", amount: "1000000" }]; // 1 XION
+//       const memo = "Token transfer test";
+//       const txHash = await transferTokens(recipient, amount, memo);
+
+//       console.log("Transfer successful, tx hash:", txHash);
+//       alert(`Transfer successful! Tx Hash: ${txHash}`);
+//     } catch (error) {
+//       console.error("Transfer failed:", error);
+//       alert("Transfer failed: " + error.message);
+//     }
+//   };
+
+//   return (
+//     <div>
+//       <button onClick={handleTransfer}>Transfer 1 XION</button>
+//     </div>
+//   );
+// }
+
+// export default TransferComponent;
+
+// import { useAuth } from "@/context/useAuth";
+// import useMeta from "@/hook/useMeta";
+// import { uxionToXion } from "@/helper/convert";
+// import { Coin } from "@cosmjs/stargate";
+// import { useEffect, useState } from "react";
+// import { Timestamp } from "cosmjs-types/google/protobuf/timestamp";
+// import { GenericAuthorization } from "cosmjs-types/cosmos/authz/v1beta1/authz";
+// import { MsgGrant } from "cosmjs-types/cosmos/authz/v1beta1/tx";
+
+// export default function useXion() {
+//   const { bech32Address, isConnected, isConnecting, queryClient, signingClient, signArb } = useMeta();
+//   const { user } = useAuth();
+//   const [signArbResponse, setSignArbResponse] = useState<string>("");
+
+//   console.log({ user, isConnecting });
+
+//   const handleSign = async (): Promise<void> => {
+//     if (signingClient?.granteeAddress) {
+//       try {
+//         const response = await signArb?.(signingClient.granteeAddress, "abstraxion challenge");
+//         console.log("Sign response:", response);
+//         if (response) setSignArbResponse(response);
+//       } catch (error) {
+//         console.error("Error during signArb:", error);
+//       }
+//     }
+//   };
+
+//   const grantPermission = async (): Promise<string> => {
+//     if (!signingClient || !bech32Address) {
+//       throw new Error("Wallet is not connected properly for granting.");
+//     }
+
+//     const grantee = signingClient.granteeAddress;
+//     if (!grantee) {
+//       throw new Error("No grantee address available.");
+//     }
+
+//     try {
+//       // Create a new grant
+//       const now = new Date();
+//       const expiration = new Date(now.getTime() + 60 * 60 * 24 * 1000); // 1 day later
+//       const timestamp = Timestamp.fromPartial({
+//         seconds: BigInt(Math.trunc(expiration.getTime() / 1000)),
+//         nanos: 0,
+//       });
+
+//       const grantMsg: MsgGrant = {
+//         granter: bech32Address,
+//         grantee: grantee,
+//         grant: {
+//           authorization: {
+//             typeUrl: "/cosmos.authz.v1beta1.GenericAuthorization",
+//             value: GenericAuthorization.encode({
+//               msg: "/cosmos.bank.v1beta1.MsgSend",
+//             }).finish(),
+//           },
+//           expiration: timestamp,
+//         },
+//       };
+
+//       const fee = "auto";
+//       const result = await signingClient.signAndBroadcast(
+//         bech32Address,
+//         [
+//           {
+//             typeUrl: "/cosmos.authz.v1beta1.MsgGrant",
+//             value: grantMsg,
+//           },
+//         ],
+//         fee
+//       );
+
+//       console.log("Grant result:", result);
+//       if (result.code !== 0) {
+//         throw new Error(`Grant failed: ${result.rawLog}`);
+//       }
+
+//       return result.transactionHash;
+//     } catch (error) {
+//       // Ignore "grant already exists" error
+//       if (error.message.includes("authorization already exists")) {
+//         console.log("Grant already exists, proceeding...");
+//         return "Grant already exists";
+//       }
+//       console.error("Error granting permission:", error);
+//       throw error;
+//     }
+//   };
+
+//   const transferTokens = async (
+//     recipientAddress: string,
+//     amount: Coin[],
+//     memo: string = ""
+//   ): Promise<string> => {
+//     try {
+//       if (!isConnected || !signingClient) {
+//         throw new Error("Wallet not connected. Please connect your wallet.");
+//       }
+
+//       if (!recipientAddress.startsWith("xion")) {
+//         throw new Error("Invalid recipient address. Must be a valid Xion address.");
+//       }
+
+//       if (!amount.length || amount.some((coin) => !coin.denom || !coin.amount)) {
+//         throw new Error("Invalid amount. Must specify valid denomination and amount.");
+//       }
+
+//       // Ensure grant exists before sending tokens
+//       const grantee = signingClient.granteeAddress;
+//       if (!grantee) {
+//         throw new Error("No grantee address available.");
+//       }
+
+//       // Attempt to create a grant
+//       await grantPermission();
+
+//       // Check balance
+//       const balance = await queryClient?.getBalance(bech32Address, amount[0].denom);
+//       const totalNeeded = Number(amount[0].amount) + 1000; // Approximate gas fee
+//       if (!balance || Number(balance.amount) < totalNeeded) {
+//         throw new Error(
+//           `Insufficient balance. Available: ${uxionToXion(balance?.amount || "0")} ${
+//             amount[0].denom
+//           }`
+//         );
+//       }
+
+//       // Send tokens
+//       const result = await signingClient.sendTokens(
+//         bech32Address,
+//         recipientAddress,
+//         amount,
+//         "auto",
+//         memo
+//       );
+
+//       return result.transactionHash;
+//     } catch (error) {
+//       console.error("Error transferring tokens:", error);
+//       throw error;
+//     }
+//   };
+
+//   const getMetaBalance = async (address: string, denom = "uxion") => {
+//     if (!queryClient) {
+//       throw new Error("Query client is not initialized.");
+//     }
+//     try {
+//       const bal = await queryClient.getBalance(address, denom);
+//       return bal?.amount ? uxionToXion(bal.amount) : undefined;
+//     } catch (error) {
+//       console.error("Error fetching balance:", error);
+//     }
+//   };
+
+//   const getWalletQuery = async () => {
+//     if (!queryClient) throw new Error("Query client not initialized.");
+//     try {
+//       const response = await queryClient.queryContractSmart("", { get_count: {} });
+//       console.log(response);
+//     } catch (error) {
+//       console.error("Error querying wallet:", error);
+//     }
+//   };
+
+//   return {
+//     transferTokens,
+//     getMetaBalance,
+//     getWalletQuery,
+//     handleSign,
+//     signArbResponse,
+//     grantPermission,
+//   };
+// }
+
+// import { useAuth } from "@/context/useAuth";
+// import useMeta from "@/hook/useMeta";
+// import { uxionToXion } from "@/helper/convert";
+// import { Coin } from "@cosmjs/stargate";
+// import { useEffect, useState } from "react";
+// import { Timestamp } from "cosmjs-types/google/protobuf/timestamp";
+// import { GenericAuthorization } from "cosmjs-types/cosmos/authz/v1beta1/authz";
+// import { MsgGrant } from "cosmjs-types/cosmos/authz/v1beta1/tx";
+
+// export default function useXion() {
+//   const { bech32Address, isConnected, isConnecting, queryClient, signingClient, signArb } = useMeta();
+//   const { user } = useAuth();
+//   const [signArbResponse, setSignArbResponse] = useState<string>("");
+
+//   console.log({ user, isConnecting });
+
+//   const handleSign = async (): Promise<void> => {
+//     if (signingClient?.granteeAddress) {
+//       try {
+//         const response = await signArb?.(signingClient.granteeAddress, "abstraxion challenge");
+//         console.log("Sign response:", response);
+//         if (response) setSignArbResponse(response);
+//       } catch (error) {
+//         console.error("Error during signArb:", error);
+//       }
+//     }
+//   };
+
+//   const grantPermission = async (): Promise<string> => {
+//     if (!signingClient || !bech32Address) {
+//       throw new Error("Wallet is not connected properly for granting.");
+//     }
+
+//     const grantee = signingClient.granteeAddress;
+//     if (!grantee) {
+//       throw new Error("No grantee address available.");
+//     }
+
+//     try {
+//       // Check if a grant already exists
+//       const grantQuery = await queryClient?.queryAbci("/cosmos.authz.v1beta1.Grants", {
+//         granter: bech32Address,
+//         grantee: grantee,
+//         msg_type_url: "/cosmos.bank.v1beta1.MsgSend",
+//       });
+//       if (grantQuery?.grants?.length > 0) {
+//         console.log("Grant already exists:", grantQuery);
+//         return "Grant already exists";
+//       }
+
+//       // Create a new grant
+//       const now = new Date();
+//       const expiration = new Date(now.getTime() + 60 * 60 * 24 * 1000); // 1 day later
+//       const timestamp = Timestamp.fromPartial({
+//         seconds: BigInt(Math.trunc(expiration.getTime() / 1000)),
+//         nanos: 0,
+//       });
+
+//       const grantMsg: MsgGrant = {
+//         granter: bech32Address,
+//         grantee: grantee,
+//         grant: {
+//           authorization: {
+//             typeUrl: "/cosmos.authz.v1beta1.GenericAuthorization",
+//             value: GenericAuthorization.encode({
+//               msg: "/cosmos.bank.v1beta1.MsgSend",
+//             }).finish(),
+//           },
+//           expiration: timestamp,
+//         },
+//       };
+
+//       const fee = "auto";
+//       const result = await signingClient.signAndBroadcast(
+//         bech32Address,
+//         [
+//           {
+//             typeUrl: "/cosmos.authz.v1beta1.MsgGrant",
+//             value: grantMsg,
+//           },
+//         ],
+//         fee
+//       );
+
+//       console.log("Grant result:", result);
+//       if (result.code !== 0) {
+//         throw new Error(`Grant failed: ${result.rawLog}`);
+//       }
+
+//       return result.transactionHash;
+//     } catch (error) {
+//       console.error("Error granting permission:", error);
+//       throw error;
+//     }
+//   };
+
+//   const transferTokens = async (
+//     recipientAddress: string,
+//     amount: Coin[],
+//     memo: string = ""
+//   ): Promise<string> => {
+//     try {
+//       if (!isConnected || !signingClient) {
+//         throw new Error("Wallet not connected. Please connect your wallet.");
+//       }
+
+//       if (!recipientAddress.startsWith("xion")) {
+//         throw new Error("Invalid recipient address. Must be a valid Xion address.");
+//       }
+
+//       if (!amount.length || amount.some((coin) => !coin.denom || !coin.amount)) {
+//         throw new Error("Invalid amount. Must specify valid denomination and amount.");
+//       }
+
+//       // Ensure grant exists before sending tokens
+//       const grantee = signingClient.granteeAddress;
+//       if (!grantee) {
+//         throw new Error("No grantee address available.");
+//       }
+
+//       const grantQuery = await queryClient?.queryAbci("/cosmos.authz.v1beta1.Grants", {
+//         granter: bech32Address,
+//         grantee: grantee,
+//         msg_type_url: "/cosmos.bank.v1beta1.MsgSend",
+//       });
+
+//       if (!grantQuery?.grants?.length) {
+//         console.log("No grant found. Attempting to create one...");
+//         await grantPermission();
+//       }
+
+//       // Check balance
+//       const balance = await queryClient?.getBalance(bech32Address, amount[0].denom);
+//       const totalNeeded = Number(amount[0].amount) + 1000; // Approximate gas fee
+//       if (!balance || Number(balance.amount) < totalNeeded) {
+//         throw new Error(
+//           `Insufficient balance. Available: ${uxionToXion(balance?.amount || "0")} ${
+//             amount[0].denom
+//           }`
+//         );
+//       }
+
+//       // Send tokens
+//       const result = await signingClient.sendTokens(
+//         bech32Address,
+//         recipientAddress,
+//         amount,
+//         "auto",
+//         memo
+//       );
+
+//       return result.transactionHash;
+//     } catch (error) {
+//       console.error("Error transferring tokens:", error);
+//       throw error;
+//     }
+//   };
+
+//   const getMetaBalance = async (address: string, denom = "uxion") => {
+//     if (!queryClient) {
+//       throw new Error("Query client is not initialized.");
+//     }
+//     try {
+//       const bal = await queryClient.getBalance(address, denom);
+//       return bal?.amount ? uxionToXion(bal.amount) : undefined;
+//     } catch (error) {
+//       console.error("Error fetching balance:", error);
+//     }
+//   };
+
+//   const getWalletQuery = async () => {
+//     if (!queryClient) throw new Error("Query client not initialized.");
+//     try {
+//       const response = await queryClient.queryContractSmart("", { get_count: {} });
+//       console.log(response);
+//     } catch (error) {
+//       console.error("Error querying wallet:", error);
+//     }
+//   };
+
+//   return {
+//     transferTokens,
+//     getMetaBalance,
+//     getWalletQuery,
+//     handleSign,
+//     signArbResponse,
+//     grantPermission,
+//   };
+// }
+
+// import { useAuth } from "@/context/useAuth";
+// import useMeta from "@/hook/useMeta";
+// import { uxionToXion } from "@/helper/convert";
+// import { DeliverTxResponse } from "@cosmjs/cosmwasm-stargate";
+// import { useEffect, useState } from "react";
+// import { Timestamp } from "cosmjs-types/google/protobuf/timestamp";
+// import { GenericAuthorization } from "cosmjs-types/cosmos/authz/v1beta1/authz";
+// import { MsgGrant } from "cosmjs-types/cosmos/authz/v1beta1/tx";
+// // import { Coin } from "@cosmjs/proto-signing";
+// // import { Coin } from "cosmjs-types/cosmos/base/v1beta1/coin";
+// import { Coin } from '@cosmjs/stargate';
+
+// export default function useXion() {
+//   const { bech32Address, isConnected, isConnecting, queryClient, signingClient, signArb } = useMeta();
+//   const { user } = useAuth();
+//   const [signArbResponse, setSignArbResponse] = useState<string>("");
+
+//   console.log({ user, isConnecting });
+
+//   // useEffect(() => {
+//   //   console.log("Client details:", {
+//   //     type: signingClient?.constructor.name,
+//   //     rpc: signingClient?.getChainId(),
+//   //     granteeAddress: signingClient?.granteeAddress,
+//   //   });
+//   //   if (signingClient) {
+//   //     handleSign();
+//   //   }
+//   // }, [signingClient]);
+
+//   const handleSign = async (): Promise<void> => {
+//     if (signingClient?.granteeAddress) {
+//       const response = await signArb?.(signingClient.granteeAddress, "abstraxion challenge");
+//       console.log(response, "from handle sign");
+//       if (response) setSignArbResponse(response);
+//     }
+//   };
+
+//   const grantPermission = async () => {
+//     if (!signingClient || !bech32Address) {
+//       throw new Error("Wallet is not connected properly for granting.");
+//     }
+//     console.log('grantPermission 1')
+
+//     const grantee = signingClient.granteeAddress;
+//     if (!grantee) {
+//       throw new Error("No grantee address available.");
+//     }
+//     console.log('grantPermission 2')
+
+//     const now = new Date();
+//     const expiration = new Date(now.getTime() + 60 * 60 * 24 * 1000); // 1 day later
+//     console.log('grantPermission 3')
+//     // const timestamp = Timestamp.fromPartial({
+//       //   seconds: Math.floor(expiration.getTime() / 1000),
+//       //   nanos: 0,
+//       // });
+//       const timestamp = Timestamp.fromPartial({
+//         seconds: BigInt(Math.trunc(expiration.getTime() / 1000)),
+//         nanos: 0,
+//       });
+//       console.log('grantPermission 4')
+
+//       const grantMsg: MsgGrant = {
+//         granter: bech32Address,
+//         grantee: grantee,
+//         grant: {
+//           authorization: {
+//             typeUrl: "/cosmos.authz.v1beta1.GenericAuthorization",
+//             value: GenericAuthorization.encode({
+//               msg: "/cosmos.bank.v1beta1.MsgSend",
+//           }).finish(),
+//         },
+//         expiration: timestamp,
+//       },
+//     };
+//     console.log('grantPermission 5')
+
+//     const fee = "auto";
+//     const result = await signingClient.signAndBroadcast(bech32Address, [
+//       {
+//         typeUrl: "/cosmos.authz.v1beta1.MsgGrant",
+//         value: grantMsg,
+//       },
+//     ], fee);
+
+//     console.log('grantPermission 6')
+//     console.log("Grant result:", result);
+//     if (result.code !== 0) {
+//       throw new Error(`Grant failed: ${result.msgResponses}`);
+//     }
+//     console.log('grantPermission 7')
+//     return result
+//   };
+
+//     // xion1rs2tnhe4mxpjnedhc84pc0v7mcy5gtmglx8896
+//       // xion148yayskhtz68wt72sdh9v372ux3a0n7qeu65sl7hcmxtqtaddnqqphlz5y
+
+//   // const transferToken = async (
+//   //   senderAddress: string,
+//   //   recipientAddress: string,
+//   //   amount: string,
+//   //   denom = "uxion"
+//   // ) => {
+//   //   console.log({senderAddress,recipientAddress,amount,denom})
+//   //   if (!isConnected || !signingClient) {
+//   //     throw new Error("Wallet not connected properly.");
+//   //   }
+//   //   if (senderAddress !== bech32Address) {
+//   //     throw new Error("Sender address doesn't match connected wallet.");
+//   //   }
+//   //   if (!recipientAddress || Number(amount) <= 0) {
+//   //     throw new Error("Invalid recipient address or amount.");
+//   //   }
+//   //   if (!signArbResponse) {
+//   //     throw new Error("Grant signature not found. Please sign the transaction first.");
+//   //   }
+
+//   //   console.log('Proceeding with token transfer...');
+
+//   //   const balance = await queryClient?.getBalance(senderAddress, denom);
+//   //   const formattedAmount = Math.floor(Number(amount) * 1e6).toString();
+//   //   const totalNeeded = Number(formattedAmount) + 1000;
+//   //   if (!balance || Number(balance.amount) < totalNeeded) {
+//   //     throw new Error(`Insufficient balance. Available: ${uxionToXion(balance?.amount || "0")} ${denom}`);
+//   //   }
+
+//   //   const funds = [{ denom, amount: formattedAmount }];
+//   //   const response: DeliverTxResponse = await signingClient.sendTokens(
+//   //     senderAddress,
+//   //     recipientAddress,
+//   //     funds,
+//   //     "auto"
+//   //   );
+
+//   //   console.log("Tokens transferred successfully:", response.transactionHash);
+//   //   return response;
+//   // };
+//   const transferTokens = async (
+//     recipientAddress: string,
+//     amount: Coin[],
+//     memo: string = ''
+//   ): Promise<string> => {
+//     try {
+//       // Ensure the user is connected and the signing client is available
+//       if (!isConnected || !signingClient) {
+//         throw new Error('Wallet not connected. Please connect your wallet.');
+//       }
+
+//       // Validate inputs
+//       if (!recipientAddress.startsWith('xion')) {
+//         throw new Error('Invalid recipient address. Must be a valid Xion address.');
+//       }
+//       if (!amount.length || amount.some(coin => !coin.denom || !coin.amount)) {
+//         throw new Error('Invalid amount. Must specify valid denomination and amount.');
+//       }
+
+//       // Send tokens using the signing client
+//       const result = await signingClient.sendTokens(
+//         bech32Address, // Sender's address
+//         recipientAddress, // Recipient's address
+//         amount, // Amount to send (e.g., [{ denom: "uxion", amount: "1000000" }])
+//         'auto', // Automatically calculate fee
+//         memo // Optional memo
+//       );
+
+//       // Return the transaction hash
+//       return result.transactionHash;
+//     } catch (error) {
+//       console.error('Error transferring tokens:', error);
+//       throw error;
+//     }
+//   };
+
+//   const getMetaBalance = async (address: string, denom = "uxion") => {
+//     if (!queryClient) {
+//       throw new Error("Query client is not initialized.");
+//     }
+//     try {
+//       const bal = await queryClient.getBalance(address, denom);
+//       return bal?.amount ? uxionToXion(bal.amount) : undefined;
+//     } catch (error) {
+//       console.error("Error fetching balance:", error);
+//     }
+//   };
+
+//   const getWalletQuery = async () => {
+//     if (!queryClient) throw new Error("Query client not initialized.");
+//     try {
+//       const response = await queryClient.queryContractSmart("", { get_count: {} });
+//       console.log(response);
+//     } catch (error) {
+//       console.error("Error querying wallet:", error);
+//     }
+//   };
+
+//   return {
+//     transferTokens,
+//     // transferToken,
+//     getMetaBalance,
+//     getWalletQuery,
+//     handleSign,
+//     signArbResponse,
+//     grantPermission
+//   };
+// }

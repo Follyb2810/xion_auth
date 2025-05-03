@@ -1,0 +1,770 @@
+import { useAuth } from "@/context/useAuth";
+import useMeta from "@/hook/useMeta";
+import { uxionToXion } from "@/helper/convert";
+import { MsgSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
+import { DeliverTxResponse } from "@cosmjs/cosmwasm-stargate";
+import { Coin,QueryClient,StargateClient, setupBankExtension, BankExtension } from "@cosmjs/stargate";
+// StargateClient
+// createProtobufRpcClient
+import { Tendermint34Client } from "@cosmjs/tendermint-rpc";
+
+export default function useXion() {
+  const { bech32Address, isConnected, queryClient, signingClient, signArb } = useMeta();
+  const { user } = useAuth();
+  console.log({ user });
+  console.log({ bech32Address });
+
+const url ='https://rpc.xion-testnet-2.burnt.com:443'
+  const getBankQueryClient = async () => {
+    try {
+      const client: StargateClient = await StargateClient.connect(
+        // "https://rpc.xion-testnet-1.burnt.com:443" 
+        url
+      );
+      
+      return {
+        ...client,
+        bank: setupBankExtension(client), 
+      };
+    } catch (error) {
+      console.error("Error initializing bank query client:", error);
+      throw error;
+    }
+  };
+
+
+
+// const getBankQueryClient = async (): Promise<QueryClient & BankExtension> => {
+//   try {
+//     const tmClient = await Tendermint34Client.connect("https://rpc.xion-testnet-1.burnt.com:443");
+//     const queryClient = new QueryClient(tmClient);
+//     const bankExtension = setupBankExtension(queryClient);
+//     return {
+//       ...queryClient,
+//       ...bankExtension,
+//     };
+//   } catch (error) {
+//     console.error("Error initializing bank query client:", error);
+//     throw error;
+//   }
+// };
+// const getBankQueryClient = async (): Promise<QueryClient & BankExtension> => {
+//   try {
+//     const tmClient = await Tendermint34Client.connect("https://rpc.xion-testnet-1.burnt.com:443");
+//     const queryClient = new QueryClient(tmClient);
+//     return setupBankExtension(queryClient); // This returns the extended client correctly typed
+//   } catch (error) {
+//     console.error("Error initializing bank query client:", error);
+//     throw error;
+//   }
+// };
+// const getBankQueryClient = async (): Promise<QueryClient & BankExtension> => {
+//   try {
+//     const url ='https://rpc.xion-testnet-2.burnt.com:443'
+//     // "https://rpc.xion-testnet-1.burnt.com:443"
+//     const tmClient = await Tendermint34Client.connect(url);
+//     const baseQueryClient = new QueryClient(tmClient);
+//     const extendedQueryClient = setupBankExtension(baseQueryClient);
+
+//     return extendedQueryClient as QueryClient & BankExtension;
+//   } catch (error) {
+//     console.error("Error initializing bank query client:", error);
+//     throw error;
+//   }
+// };
+
+  const transferToken = async (
+    senderAddress: string,
+    recipientAddress: string,
+    amount: string
+  ) => {
+    console.log({ senderAddress, bech32Address });
+    try {
+      if (!isConnected) {
+        throw new Error("Please connect your wallet.");
+      }
+
+      if (!signingClient) {
+        throw new Error("Signing client is not initialized.");
+      }
+
+      const formattedAmount = Math.floor(Number(amount) * 1e6).toString();
+      const funds = [{ denom: "uxion", amount: formattedAmount }];
+
+      const fee = {
+        amount: [{ denom: "uxion", amount: "1000" }],
+        gas: "100000",
+      };
+
+      console.log({ fee });
+
+      const response: DeliverTxResponse = await signingClient.sendTokens(
+        bech32Address,
+        recipientAddress,
+        funds,
+        "auto",
+        undefined
+      );
+      console.log("Tokens transferred successfully!");
+      console.log({ a: response.transactionHash });
+      return response;
+    } catch (error) {
+      console.error("Error transferring tokens:", error);
+    }
+  };
+
+  const getMetaBalance = async (
+    address: string,
+    denom: string = "uxion"
+  ): Promise<string | undefined> => {
+    try {
+      if (!queryClient) {
+        throw new Error("Query client is not initialized.");
+      }
+
+      const bal = await queryClient.getBalance(address, denom);
+      if (bal?.amount) {
+        return uxionToXion(bal.amount);
+      } else {
+        throw new Error("Balance not found or invalid balance structure.");
+      }
+    } catch (error) {
+      console.error("Error getting balance:", error);
+    }
+  };
+
+  const getWalletQuery = async () => {
+    try {
+      if (!isConnected) {
+        throw new Error("Please connect your wallet.");
+      }
+
+      if (!queryClient) {
+        throw new Error("Query client is not initialized.");
+      }
+
+      const response = await queryClient.queryContractSmart("", {
+        get_count: {},
+      });
+      console.log(response);
+    } catch (error) {
+      console.error("Error querying wallet:", error);
+    }
+  };
+
+  const transferTokenWithApproval = async (
+    senderAddress: string,
+    recipientAddress: string,
+    amount: string
+  ) => {
+    try {
+      if (!isConnected) {
+        throw new Error("Please connect your wallet.");
+      }
+
+      if (!signingClient || !signArb) {
+        throw new Error("Signing client or signArb is not initialized.");
+      }
+
+      const formattedAmount = Math.floor(Number(amount) * 1e6).toString();
+      const funds = [{ denom: "uxion", amount: formattedAmount }];
+
+      const msgSend: MsgSend = {
+        fromAddress: senderAddress,
+        toAddress: recipientAddress,
+        amount: funds,
+      };
+
+      console.log("Signing MsgSend:", msgSend);
+
+      await signArb(senderAddress, "you are send");
+
+      console.log("Tokens transferred successfully!");
+    } catch (error) {
+      console.error("Error transferring tokens:", error);
+    }
+  };
+
+  async function transferTokenWithConfirmation(
+    senderAddress: string,
+    recipientAddress: string,
+    amount: string,
+    denom: string = "untrn"
+  ) {
+    try {
+      if (!signingClient || !signArb) {
+        console.log("Signing client or signArb is not ready.");
+        return;
+      }
+
+      const confirmationMessage = `I confirm to send ${amount} ${denom} tokens to ${recipientAddress}`;
+      const signedMessage = await signArb(senderAddress, confirmationMessage);
+
+      if (!signedMessage) {
+        console.log("User did not sign the confirmation.");
+        return;
+      }
+
+      console.log("User signed confirmation:", signedMessage);
+      const formattedAmount = Math.floor(Number(amount) * 1e6).toString();
+
+      const funds = [
+        {
+          denom: denom,
+          amount: formattedAmount,
+        },
+      ];
+
+      const sendTokensResult = await signingClient.sendTokens(
+        senderAddress,
+        recipientAddress,
+        funds,
+        "auto",
+        "Sending tokens after user confirmation"
+      );
+
+      console.log("Transaction sent! TxHash:", sendTokensResult.transactionHash);
+    } catch (error) {
+      console.error("Error during token transfer:", error);
+    }
+  }
+
+  async function handleSign(): Promise<void> {
+    if (signingClient?.granteeAddress) {
+      const response = await signArb?.(
+        signingClient.granteeAddress,
+        "abstraxion challenge"
+      );
+      console.log(response);
+    }
+  }
+
+  const getAllTokens = async (
+    address: string
+  ): Promise<{ denom: string; amount: string }[]> => {
+    try {
+      const bankQueryClient = await getBankQueryClient();
+
+      if (!bankQueryClient?.bank) {
+        throw new Error("Bank query client is not initialized.");
+      }
+
+      const balances: readonly Coin[] = await bankQueryClient.bank.bank.allBalances(address)
+      // const balances: readonly Coin[] = await bankQueryClient.bank.allBalances(address)
+      console.log({balances})
+      return balances.map((balance: Coin) => ({
+        denom: balance.denom,
+        amount: uxionToXion(balance.amount), 
+      }));
+    } catch (error) {
+      console.error("Error fetching all token balances:", error);
+      throw error;
+    }
+  };
+
+  return {
+    getWalletQuery,
+    getMetaBalance,
+    transferToken,
+    transferTokenWithApproval,
+    transferTokenWithConfirmation,
+    handleSign,
+    getAllTokens,
+  };
+}
+
+
+import { useAuth } from "@/context/useAuth";
+import useMeta from "@/hook/useMeta";
+import { uxionToXion } from "@/helper/convert";
+import { MsgSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
+import { DeliverTxResponse } from "@cosmjs/cosmwasm-stargate";
+import { Coin, StargateClient } from "@cosmjs/stargate";
+
+export default function useXion() {
+  const { bech32Address, isConnected, queryClient, signingClient, signArb } = useMeta();
+  const { user } = useAuth();
+  
+  const url = 'https://rpc.xion-testnet-2.burnt.com:443';
+  
+  // Simplified and corrected getBankQueryClient function
+  const getBankQueryClient = async () => {
+    try {
+      const client = await StargateClient.connect(url);
+      return client;
+    } catch (error) {
+      console.error("Error initializing bank query client:", error);
+      throw error;
+    }
+  };
+
+  const transferToken = async (
+    senderAddress: string,
+    recipientAddress: string,
+    amount: string
+  ) => {
+    console.log({ senderAddress, bech32Address });
+    try {
+      if (!isConnected) {
+        throw new Error("Please connect your wallet.");
+      }
+
+      if (!signingClient) {
+        throw new Error("Signing client is not initialized.");
+      }
+
+      const formattedAmount = Math.floor(Number(amount) * 1e6).toString();
+      const funds = [{ denom: "uxion", amount: formattedAmount }];
+
+      const fee = {
+        amount: [{ denom: "uxion", amount: "1000" }],
+        gas: "100000",
+      };
+
+      console.log({ fee });
+
+      const response: DeliverTxResponse = await signingClient.sendTokens(
+        bech32Address,
+        recipientAddress,
+        funds,
+        "auto",
+        undefined
+      );
+      console.log("Tokens transferred successfully!");
+      console.log({ a: response.transactionHash });
+      return response;
+    } catch (error) {
+      console.error("Error transferring tokens:", error);
+    }
+  };
+
+  const getMetaBalance = async (
+    address: string,
+    denom: string = "uxion"
+  ): Promise<string | undefined> => {
+    try {
+      if (!queryClient) {
+        throw new Error("Query client is not initialized.");
+      }
+
+      const bal = await queryClient.getBalance(address, denom);
+      if (bal?.amount) {
+        return uxionToXion(bal.amount);
+      } else {
+        throw new Error("Balance not found or invalid balance structure.");
+      }
+    } catch (error) {
+      console.error("Error getting balance:", error);
+    }
+  };
+
+  // Corrected getAllTokens function to properly fetch all token balances
+  const getAllTokens = async (
+    address: string
+  ): Promise<{ denom: string; amount: string }[]> => {
+    try {
+      const client = await getBankQueryClient();
+      
+      if (!client) {
+        throw new Error("StargateClient is not initialized.");
+      }
+      
+      // Use the getAllBalances method from StargateClient
+      const balances: readonly Coin[] = await client.getAllBalances(address);
+      console.log("All balances:", balances);
+      
+      return balances.map((balance: Coin) => {
+        // For XION tokens, use the conversion function
+        if (balance.denom === "uxion") {
+          return {
+            denom: "XION",
+            amount: uxionToXion(balance.amount)
+          };
+        }
+        // For other tokens like USDC, handle appropriately based on their denominations
+        else if (balance.denom === "uusd" || balance.denom === "uusdc") {
+          // Assuming USDC also uses 6 decimals like XION
+          const usdcAmount = (Number(balance.amount) / 1000000).toString();
+          return {
+            denom: balance.denom === "uusd" ? "USDC" : "USDC",
+            amount: usdcAmount
+          };
+        }
+        // For any other tokens, return as is with proper formatting
+        else {
+          // Default conversion assuming 6 decimals (adjust as needed for different tokens)
+          const amount = (Number(balance.amount) / 1000000).toString();
+          return {
+            denom: balance.denom.replace(/^u/, '').toUpperCase(),
+            amount: amount
+          };
+        }
+      });
+    } catch (error) {
+      console.error("Error fetching all token balances:", error);
+      throw error;
+    }
+  };
+
+  const getWalletQuery = async () => {
+    try {
+      if (!isConnected) {
+        throw new Error("Please connect your wallet.");
+      }
+
+      if (!queryClient) {
+        throw new Error("Query client is not initialized.");
+      }
+
+      const response = await queryClient.queryContractSmart("", {
+        get_count: {},
+      });
+      console.log(response);
+    } catch (error) {
+      console.error("Error querying wallet:", error);
+    }
+  };
+
+  const transferTokenWithApproval = async (
+    senderAddress: string,
+    recipientAddress: string,
+    amount: string
+  ) => {
+    try {
+      if (!isConnected) {
+        throw new Error("Please connect your wallet.");
+      }
+
+      if (!signingClient || !signArb) {
+        throw new Error("Signing client or signArb is not initialized.");
+      }
+
+      const formattedAmount = Math.floor(Number(amount) * 1e6).toString();
+      const funds = [{ denom: "uxion", amount: formattedAmount }];
+
+      const msgSend: MsgSend = {
+        fromAddress: senderAddress,
+        toAddress: recipientAddress,
+        amount: funds,
+      };
+
+      console.log("Signing MsgSend:", msgSend);
+
+      await signArb(senderAddress, "you are send");
+
+      console.log("Tokens transferred successfully!");
+    } catch (error) {
+      console.error("Error transferring tokens:", error);
+    }
+  };
+
+  async function transferTokenWithConfirmation(
+    senderAddress: string,
+    recipientAddress: string,
+    amount: string,
+    denom: string = "untrn"
+  ) {
+    try {
+      if (!signingClient || !signArb) {
+        console.log("Signing client or signArb is not ready.");
+        return;
+      }
+
+      const confirmationMessage = `I confirm to send ${amount} ${denom} tokens to ${recipientAddress}`;
+      const signedMessage = await signArb(senderAddress, confirmationMessage);
+
+      if (!signedMessage) {
+        console.log("User did not sign the confirmation.");
+        return;
+      }
+
+      console.log("User signed confirmation:", signedMessage);
+      const formattedAmount = Math.floor(Number(amount) * 1e6).toString();
+
+      const funds = [
+        {
+          denom: denom,
+          amount: formattedAmount,
+        },
+      ];
+
+      const sendTokensResult = await signingClient.sendTokens(
+        senderAddress,
+        recipientAddress,
+        funds,
+        "auto",
+        "Sending tokens after user confirmation"
+      );
+
+      console.log("Transaction sent! TxHash:", sendTokensResult.transactionHash);
+    } catch (error) {
+      console.error("Error during token transfer:", error);
+    }
+  }
+
+  async function handleSign(): Promise<void> {
+    if (signingClient?.granteeAddress) {
+      const response = await signArb?.(
+        signingClient.granteeAddress,
+        "abstraxion challenge"
+      );
+      console.log(response);
+    }
+  }
+
+  return {
+    getWalletQuery,
+    getMetaBalance,
+    transferToken,
+    transferTokenWithApproval,
+    transferTokenWithConfirmation,
+    handleSign,
+    getAllTokens,
+  };
+}
+
+
+import { useAuth } from "@/context/useAuth";
+import useMeta from "@/hook/useMeta";
+import { uxionToXion } from "@/helper/convert";
+import { MsgSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
+import { DeliverTxResponse } from "@cosmjs/cosmwasm-stargate";
+import { Coin } from "@cosmjs/stargate";
+
+export default function useXion() {
+  const { bech32Address, isConnected, queryClient, signingClient, signArb } = useMeta();
+  const { user } = useAuth();
+  console.log(user)
+  
+  const transferToken = async (
+    senderAddress: string,
+    recipientAddress: string,
+    amount: string
+  ) => {
+    console.log({ senderAddress, bech32Address });
+    try {
+      if (!isConnected) {
+        throw new Error("Please connect your wallet.");
+      }
+
+      if (!signingClient) {
+        throw new Error("Signing client is not initialized.");
+      }
+
+      const formattedAmount = Math.floor(Number(amount) * 1e6).toString();
+      const funds = [{ denom: "uxion", amount: formattedAmount }];
+
+      const fee = {
+        amount: [{ denom: "uxion", amount: "1000" }],
+        gas: "100000",
+      };
+
+      console.log({ fee });
+
+      const response: DeliverTxResponse = await signingClient.sendTokens(
+        bech32Address,
+        recipientAddress,
+        funds,
+        "auto",
+        undefined
+      );
+      console.log("Tokens transferred successfully!");
+      console.log({ a: response.transactionHash });
+      return response;
+    } catch (error) {
+      console.error("Error transferring tokens:", error);
+    }
+  };
+
+  const getMetaBalance = async (
+    address: string,
+    denom: string = "uxion"
+  ): Promise<string | undefined> => {
+    try {
+      if (!queryClient) {
+        throw new Error("Query client is not initialized.");
+      }
+
+      const bal = await queryClient.getBalance(address, denom);
+      if (bal?.amount) {
+        return uxionToXion(bal.amount);
+      } else {
+        throw new Error("Balance not found or invalid balance structure.");
+      }
+    } catch (error) {
+      console.error("Error getting balance:", error);
+    }
+  };
+
+  // Corrected getAllTokens function to work with the abstraxion queryClient
+  const getAllTokens = async (
+    address: string
+  ): Promise<{ denom: string; amount: string }[]> => {
+    try {
+      if (!queryClient) {
+        throw new Error("Query client is not initialized.");
+      }
+      
+      // Use the getAllBalances method from the queryClient provided by useAbstraxionClient
+      const balances: readonly Coin[] = await queryClient.getAllBalances(address);
+      console.log("All balances:", balances);
+      
+      return balances.map((balance: Coin) => {
+        // For XION tokens, use the conversion function
+        if (balance.denom === "uxion") {
+          return {
+            denom: "XION",
+            amount: uxionToXion(balance.amount)
+          };
+        }
+        // For other tokens like USDC, handle appropriately based on their denominations
+        else if (balance.denom === "uusd" || balance.denom === "uusdc") {
+          // Assuming USDC also uses 6 decimals like XION
+          const usdcAmount = (Number(balance.amount) / 1000000).toString();
+          return {
+            denom: balance.denom === "uusd" ? "USDC" : "USDC",
+            amount: usdcAmount
+          };
+        }
+        // For other ibc tokens
+        else if (balance.denom.startsWith("ibc/")) {
+          // For IBC tokens, you might want to maintain the original denomination
+          // or resolve it to a more user-friendly name if you have a mapping
+          const amount = (Number(balance.amount) / 1000000).toString();
+          return {
+            denom: `IBC Token (${balance.denom.substring(0, 10)}...)`,
+            amount: amount
+          };
+        }
+        // For any other tokens, return as is with proper formatting
+        else {
+          // Default conversion assuming 6 decimals (adjust as needed for different tokens)
+          const amount = (Number(balance.amount) / 1000000).toString();
+          return {
+            denom: balance.denom.replace(/^u/, '').toUpperCase(),
+            amount: amount
+          };
+        }
+      });
+    } catch (error) {
+      console.error("Error fetching all token balances:", error);
+      throw error;
+    }
+  };
+
+  const getWalletQuery = async () => {
+    try {
+      if (!isConnected) {
+        throw new Error("Please connect your wallet.");
+      }
+
+      if (!queryClient) {
+        throw new Error("Query client is not initialized.");
+      }
+
+      const response = await queryClient.queryContractSmart("", {
+        get_count: {},
+      });
+      console.log(response);
+    } catch (error) {
+      console.error("Error querying wallet:", error);
+    }
+  };
+
+  const transferTokenWithApproval = async (
+    senderAddress: string,
+    recipientAddress: string,
+    amount: string
+  ) => {
+    try {
+      if (!isConnected) {
+        throw new Error("Please connect your wallet.");
+      }
+
+      if (!signingClient || !signArb) {
+        throw new Error("Signing client or signArb is not initialized.");
+      }
+
+      const formattedAmount = Math.floor(Number(amount) * 1e6).toString();
+      const funds = [{ denom: "uxion", amount: formattedAmount }];
+
+      const msgSend: MsgSend = {
+        fromAddress: senderAddress,
+        toAddress: recipientAddress,
+        amount: funds,
+      };
+
+      console.log("Signing MsgSend:", msgSend);
+
+      await signArb(senderAddress, "you are send");
+
+      console.log("Tokens transferred successfully!");
+    } catch (error) {
+      console.error("Error transferring tokens:", error);
+    }
+  };
+
+  async function transferTokenWithConfirmation(
+    senderAddress: string,
+    recipientAddress: string,
+    amount: string,
+    denom: string = "untrn"
+  ) {
+    try {
+      if (!signingClient || !signArb) {
+        console.log("Signing client or signArb is not ready.");
+        return;
+      }
+
+      const confirmationMessage = `I confirm to send ${amount} ${denom} tokens to ${recipientAddress}`;
+      const signedMessage = await signArb(senderAddress, confirmationMessage);
+
+      if (!signedMessage) {
+        console.log("User did not sign the confirmation.");
+        return;
+      }
+
+      console.log("User signed confirmation:", signedMessage);
+      const formattedAmount = Math.floor(Number(amount) * 1e6).toString();
+
+      const funds = [
+        {
+          denom: denom,
+          amount: formattedAmount,
+        },
+      ];
+
+      const sendTokensResult = await signingClient.sendTokens(
+        senderAddress,
+        recipientAddress,
+        funds,
+        "auto",
+        "Sending tokens after user confirmation"
+      );
+
+      console.log("Transaction sent! TxHash:", sendTokensResult.transactionHash);
+    } catch (error) {
+      console.error("Error during token transfer:", error);
+    }
+  }
+
+  async function handleSign(): Promise<void> {
+    if (signingClient?.granteeAddress) {
+      const response = await signArb?.(
+        signingClient.granteeAddress,
+        "abstraxion challenge"
+      );
+      console.log(response);
+    }
+  }
+
+  return {
+    getWalletQuery,
+    getMetaBalance,
+    transferToken,
+    transferTokenWithApproval,
+    transferTokenWithConfirmation,
+    handleSign,
+    getAllTokens,
+  };
+}
